@@ -30,13 +30,13 @@ endif()
 
 message(STATUS "Third-party: creating target 'TBB::tbb'")
 
-# Using wjakob's fork as it has a better cmake build system
+# Using sabhyakhurana's fork as it has a better cmake build system
 # Change it back to intel's once they fix it
 # https://github.com/intel/tbb/issues/6
 include(FetchContent)
 FetchContent_Declare(
     tbb
-    GIT_REPOSITORY https://github.com/wjakob/tbb.git
+    GIT_REPOSITORY https://github.com/sabhyakhurana/tbb.git
     GIT_TAG 9e219e24fe223b299783200f217e9d27790a87b0
     GIT_SHALLOW FALSE
 )
