@@ -10,6 +10,7 @@ data/bunny_localRotation/*.polyscope.ini
 data/bunny_localRotation/imgui.ini
 data/bunny_localRotation/optInfo.txt
 data/bunny_localRotation/tmpRes
+data/bunny_localRotation/screenshots
 
 cmake/FindMKL.cmake
 
