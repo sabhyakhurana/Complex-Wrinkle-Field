@@ -798,6 +798,8 @@ ComplexLoop::_AssembleEdgeOdd(int face, int edgeInFace, TripletInserter out) con
 	}
 }
 
+//USEFUL!!
+
 void ComplexLoop::meshSubdivide(int level)
 {
 	int nverts = _mesh.GetVertCount();

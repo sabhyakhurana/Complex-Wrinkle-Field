@@ -281,6 +281,8 @@ void ComplexLoopZuenko::updateLoopedZvals(const Eigen::VectorXd& omega, const st
 		}
 	}
 }
+// upsamples wrinkle params
+// useful
 
 void ComplexLoopZuenko::Subdivide(const Eigen::VectorXd& omega, const std::vector<std::complex<double>>& zvals, Eigen::VectorXd& omegaNew, std::vector<std::complex<double>>& upZvals, int level)
 {
