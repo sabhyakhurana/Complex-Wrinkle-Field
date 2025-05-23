@@ -37,7 +37,6 @@ include(FetchContent)
 FetchContent_Declare(
     tbb
     GIT_REPOSITORY https://github.com/sabhyakhurana/tbb.git
-    GIT_TAG 9e219e24fe223b299783200f217e9d27790a87b0
     GIT_SHALLOW FALSE
 )
 
