@@ -140,82 +140,34 @@ struct {
 	bool reOptimize = false;
 } args;
 
+using Complex = std::complex<double>;
 
-struct PickedFace
+// --- Utility: Get Z-values from Eigen Matrix ---
+// Note: Assuming Z values are stored in a structure compatible with the application's list format
+// (std::vector<std::complex<double>>)
+
+void copyComplexEigenToStdVector(
+    const Eigen::VectorXcd& psi_eigen, 
+    std::vector<Complex>& zvals_std)
 {
-	int fid = -1;
-	double ampChangeRatio = 1.;
-	int effectiveRadius = 5;
-	int interfaceDilation = 5;
-	VecMotionType freqVecMotion = Enlarge;
-	double freqVecChangeValue = 1.;
-	bool isFreqAmpCoupled = false;
+    int nverts = psi_eigen.size();
+    zvals_std.resize(nverts);
+    for (int i = 0; i < nverts; ++i) {
+        zvals_std[i] = psi_eigen(i);
+    }
+}
 
-	std::vector<int> effectiveFaces = {};
-	std::vector<int> interFaces = {};
-	std::vector<int> effectiveVerts = {};
-	std::vector<int> interVerts = {};
+// --- Utility: Get Z-values from Std Vector to Eigen Matrix ---
 
-	void buildEffectiveFaces(int nfaces)
-	{
-		effectiveFaces.clear();
-		effectiveVerts.clear();
-		interFaces.clear();
-		interVerts.clear();
-
-		if (fid == -1 || fid >= nfaces)
-			return;
-		else
-		{
-			Eigen::VectorXi curFaceFlags = Eigen::VectorXi::Zero(triF.rows());
-			curFaceFlags(fid) = 1;
-			Eigen::VectorXi curFaceFlagsNew = curFaceFlags;
-			regEdt.faceDilation(curFaceFlagsNew, curFaceFlags, effectiveRadius);
-			regEdt.faceDilation(curFaceFlags, curFaceFlagsNew, interfaceDilation);
-
-			Eigen::VectorXi vertFlags, vertFlagsNew;
-
-			faceFlags2VertFlags(triMesh, triV[0].rows(), curFaceFlags, vertFlags);
-			faceFlags2VertFlags(triMesh, triV[0].rows(), curFaceFlagsNew, vertFlagsNew);
-
-			for (int i = 0; i < curFaceFlags.rows(); i++)
-			{
-				if (curFaceFlags(i))
-					effectiveFaces.push_back(i);
-				else if (curFaceFlagsNew(i))
-					interFaces.push_back(i);
-			}
-
-
-			for (int i = 0; i < vertFlags.rows(); i++)
-			{
-				if (vertFlags(i))
-					effectiveVerts.push_back(i);
-				else if (vertFlagsNew(i))
-					interVerts.push_back(i);
-			}
-		}
-	}
-};
-
-std::vector<PickedFace> pickFaces;
-
-bool addSelectedFaces(const PickedFace face, Eigen::VectorXi& curFaceFlags, Eigen::VectorXi& curVertFlags)
+void copyComplexStdVectorToEigen(
+    const std::vector<Complex>& zvals_std,
+    Eigen::VectorXcd& psi_eigen)
 {
-	for (auto& f : face.effectiveFaces)
-		if (curFaceFlags(f))
-			return false;
-
-	for (auto& v : face.effectiveVerts)
-		if (curVertFlags(v))
-			return false;
-
-	for (auto& f : face.effectiveFaces)
-		curFaceFlags(f) = 1;
-	for (auto& v : face.effectiveVerts)
-		curVertFlags(v) = 1;
-
-	return true;
+    int nverts = zvals_std.size();
+    psi_eigen.resize(nverts);
+    for (int i = 0; i < nverts; ++i) {
+        psi_eigen(i) = zvals_std[i];
+    }
 }
 
 
@@ -292,7 +244,7 @@ void getGradPhisPerVertexLineField(const Eigen::MatrixXd& face_grad_phis, const 
     }
 }
 
-void initializeRandomUnitNormZvals(std::vector<std::complex<double>>& initZvals, const Eigen::MatrixXd& triV) 
+void initializeRandomUnitNormZvals(const Eigen::MatrixXd& triV) 
 {
     // 1. Determine the number of vertices
     int nverts = triV.rows();
@@ -440,172 +392,172 @@ void initialization(const Eigen::MatrixXd& triV, const Eigen::MatrixXi& triF, Ei
 	selectedVertices.setZero(triV.rows());
 }
 
-bool loadProblem()
-{
-	std::string loadFileName = args.input;
-	std::cout << "load file in: " << loadFileName << std::endl;
-	using json = nlohmann::json;
-	std::ifstream inputJson(loadFileName);
-	if (!inputJson) {
-		std::cerr << "missing json file in " << loadFileName << std::endl;
-		return false;
-	}
+// bool loadProblem()
+// {
+// 	std::string loadFileName = args.input;
+// 	std::cout << "load file in: " << loadFileName << std::endl;
+// 	using json = nlohmann::json;
+// 	std::ifstream inputJson(loadFileName);
+// 	if (!inputJson) {
+// 		std::cerr << "missing json file in " << loadFileName << std::endl;
+// 		return false;
+// 	}
 
-	std::string filePath = loadFileName;
-	std::replace(filePath.begin(), filePath.end(), '\\', '/'); // handle the backslash issue for windows
-	int id = filePath.rfind("/");
-	workingFolder = filePath.substr(0, id + 1);
-	std::cout << "working folder: " << workingFolder << std::endl;
+// 	std::string filePath = loadFileName;
+// 	std::replace(filePath.begin(), filePath.end(), '\\', '/'); // handle the backslash issue for windows
+// 	int id = filePath.rfind("/");
+// 	workingFolder = filePath.substr(0, id + 1);
+// 	std::cout << "working folder: " << workingFolder << std::endl;
 
-	json jval;
-	inputJson >> jval;
+// 	json jval;
+// 	inputJson >> jval;
 
-	std::string meshFile = jval["mesh_name"];
-	upsampleTimes = jval["upsampled_times"];
+// 	std::string meshFile = jval["mesh_name"];
+// 	upsampleTimes = jval["upsampled_times"];
 
 
-	meshFile = workingFolder + meshFile;
-	igl::readOBJ(meshFile, triV, triF);
-	triMesh = MeshConnectivity(triF);
-	initialization(triV, triF, upsampledTriV, upsampledTriF);
+// 	meshFile = workingFolder + meshFile;
+// 	igl::readOBJ(meshFile, triV, triF);
+// 	triMesh = MeshConnectivity(triF);
+// 	initialization(triV, triF, upsampledTriV, upsampledTriF);
 	
 
-	quadOrder = jval["quad_order"];
-	numFrames = jval["num_frame"];
-    if (jval.contains(std::string_view{ "wrinkle_amp_ratio" }))
-    {
-        if(args.ampScale == 1)
-            args.ampScale = jval["wrinkle_amp_ratio"];
-    }
+// 	quadOrder = jval["quad_order"];
+// 	numFrames = jval["num_frame"];
+//     if (jval.contains(std::string_view{ "wrinkle_amp_ratio" }))
+//     {
+//         if(args.ampScale == 1)
+//             args.ampScale = jval["wrinkle_amp_ratio"];
+//     }
 
-	isSelectAll = jval["region_global_details"]["select_all"];
-	isCoupled = jval["region_global_details"]["amp_omega_coupling"];
-	selectedMagValue = jval["region_global_details"]["amp_operation_value"];
-	selectedMotionValue = jval["region_global_details"]["omega_operation_value"];
-	std::string optype = jval["region_global_details"]["omega_operation_motion"];
+// 	isSelectAll = jval["region_global_details"]["select_all"];
+// 	isCoupled = jval["region_global_details"]["amp_omega_coupling"];
+// 	selectedMagValue = jval["region_global_details"]["amp_operation_value"];
+// 	selectedMotionValue = jval["region_global_details"]["omega_operation_value"];
+// 	std::string optype = jval["region_global_details"]["omega_operation_motion"];
 
-	if (optype == "None")
-		selectedMotion = None;
-	else if (optype == "Enlarge")
-		selectedMotion = Enlarge;
-	else if (optype == "Rotate")
-		selectedMotion = Rotate;
-	else
-		selectedMotion = None;
+// 	if (optype == "None")
+// 		selectedMotion = None;
+// 	else if (optype == "Enlarge")
+// 		selectedMotion = Enlarge;
+// 	else if (optype == "Rotate")
+// 		selectedMotion = Rotate;
+// 	else
+// 		selectedMotion = None;
 
-	pickFaces.clear();
-
-
-	int nedges = triMesh.nEdges();
-	int nverts = triV.rows();
-
-	std::string initAmpPath = jval["init_amp"];
-	std::string initOmegaPath = jval["init_omega"];
-	std::string initZValsPath = "zvals.txt";
-	if (jval.contains(std::string_view{ "init_zvals" }))
-	{
-		initZValsPath = jval["init_zvals"];
-	}
-
-	if (!loadEdgeOmega(workingFolder + initOmegaPath, nedges, initOmega)) {
-		std::cout << "missing init edge omega file." << std::endl;
-		return false;
-	}
-
-	if (!loadVertexZvals(workingFolder + initZValsPath, triV.rows(), initZvals))
-	{
-		std::cout << "missing init zval file, try to load amp file, and round zvals from amp and omega" << std::endl;
-		if (!loadVertexAmp(workingFolder + initAmpPath, triV.rows(), initAmp))
-		{
-			std::cout << "missing init amp file: " << std::endl;
-			return false;
-		}
-
-		else
-		{
-			Eigen::VectorXd edgeArea, vertArea;
-			edgeArea = getEdgeArea(triV, triMesh);
-			vertArea = getVertArea(triV, triMesh);
-			IntrinsicFormula::roundZvalsFromEdgeOmegaVertexMag(triMesh, initOmega, initAmp, edgeArea, vertArea, triV.rows(), initZvals);
-		}
-	}
-	else
-	{
-		initAmp.setZero(triV.rows());
-		for (int i = 0; i < initZvals.size(); i++)
-			initAmp(i) = std::abs(initZvals[i]);
-	}
-
-	std::string optZvals = jval["solution"]["opt_zvals"];
-	std::string optOmega = jval["solution"]["opt_omega"];
+// 	pickFaces.clear();
 
 
+// 	int nedges = triMesh.nEdges();
+// 	int nverts = triV.rows();
 
-	isLoadOpt = true;
-	zList.clear();
-	omegaList.clear();
-	ampList.clear();
-	for (int i = 0; i < numFrames; i++)
-	{
-		std::string zvalFile = workingFolder + optZvals + "/zvals_" + std::to_string(i) + ".txt";
-		std::string edgeOmegaFile = workingFolder + optOmega + "/omega_" + std::to_string(i) + ".txt";
+// 	std::string initAmpPath = jval["init_amp"];
+// 	std::string initOmegaPath = jval["init_omega"];
+// 	std::string initZValsPath = "zvals.txt";
+// 	if (jval.contains(std::string_view{ "init_zvals" }))
+// 	{
+// 		initZValsPath = jval["init_zvals"];
+// 	}
+
+// 	if (!loadEdgeOmega(workingFolder + initOmegaPath, nedges, initOmega)) {
+// 		std::cout << "missing init edge omega file." << std::endl;
+// 		return false;
+// 	}
+
+// 	if (!loadVertexZvals(workingFolder + initZValsPath, triV.rows(), initZvals))
+// 	{
+// 		std::cout << "missing init zval file, try to load amp file, and round zvals from amp and omega" << std::endl;
+// 		if (!loadVertexAmp(workingFolder + initAmpPath, triV.rows(), initAmp))
+// 		{
+// 			std::cout << "missing init amp file: " << std::endl;
+// 			return false;
+// 		}
+
+// 		else
+// 		{
+// 			Eigen::VectorXd edgeArea, vertArea;
+// 			edgeArea = getEdgeArea(triV, triMesh);
+// 			vertArea = getVertArea(triV, triMesh);
+// 			IntrinsicFormula::roundZvalsFromEdgeOmegaVertexMag(triMesh, initOmega, initAmp, edgeArea, vertArea, triV.rows(), initZvals);
+// 		}
+// 	}
+// 	else
+// 	{
+// 		initAmp.setZero(triV.rows());
+// 		for (int i = 0; i < initZvals.size(); i++)
+// 			initAmp(i) = std::abs(initZvals[i]);
+// 	}
+
+// 	std::string optZvals = jval["solution"]["opt_zvals"];
+// 	std::string optOmega = jval["solution"]["opt_omega"];
+
+
+
+// 	isLoadOpt = true;
+// 	zList.clear();
+// 	omegaList.clear();
+// 	ampList.clear();
+// 	for (int i = 0; i < numFrames; i++)
+// 	{
+// 		std::string zvalFile = workingFolder + optZvals + "/zvals_" + std::to_string(i) + ".txt";
+// 		std::string edgeOmegaFile = workingFolder + optOmega + "/omega_" + std::to_string(i) + ".txt";
 		
-		std::vector<std::complex<double>> zvals;
-		Eigen::VectorXd vertAmp;
+// 		std::vector<std::complex<double>> zvals;
+// 		Eigen::VectorXd vertAmp;
 
-		if (!loadVertexZvals(zvalFile, nverts, zvals))
-		{
-			isLoadOpt = false;
-			break;
-		}
-		else {
-			vertAmp.setZero(zvals.size());
-			for (int i = 0; i < zvals.size(); i++) {
-				vertAmp[i] = std::abs(zvals[i]);
-			}
-		}
+// 		if (!loadVertexZvals(zvalFile, nverts, zvals))
+// 		{
+// 			isLoadOpt = false;
+// 			break;
+// 		}
+// 		else {
+// 			vertAmp.setZero(zvals.size());
+// 			for (int i = 0; i < zvals.size(); i++) {
+// 				vertAmp[i] = std::abs(zvals[i]);
+// 			}
+// 		}
 
-		Eigen::VectorXd edgeOmega;
-		if (!loadEdgeOmega(edgeOmegaFile, nedges, edgeOmega)) {
-			isLoadOpt = false;
-			break;
-		}
+// 		Eigen::VectorXd edgeOmega;
+// 		if (!loadEdgeOmega(edgeOmegaFile, nedges, edgeOmega)) {
+// 			isLoadOpt = false;
+// 			break;
+// 		}
 
-		zList.push_back(zvals);
-		omegaList.push_back(edgeOmega);
-		ampList.push_back(vertAmp);
-	}
+// 		zList.push_back(zvals);
+// 		omegaList.push_back(edgeOmega);
+// 		ampList.push_back(vertAmp);
+// 	}
 
-	if (isLoadOpt)
-	{
-		std::cout << "load zvals and omegas from file!" << std::endl;
-	}
-	if (!isLoadOpt)
-	{
-		buildEditModel(triV, triMesh, vertOpts, faceFlags, quadOrder, spatialAmpRatio, spatialEdgeRatio, spatialKnoppelRatio, effectivedistFactor, editModel);
+// 	if (isLoadOpt)
+// 	{
+// 		std::cout << "load zvals and omegas from file!" << std::endl;
+// 	}
+// 	if (!isLoadOpt)
+// 	{
+// 		buildEditModel(triV, triMesh, vertOpts, faceFlags, quadOrder, spatialAmpRatio, spatialEdgeRatio, spatialKnoppelRatio, effectivedistFactor, editModel);
 
-        if(!isLoadTar)
-        {
-            editModel->editCWFBasedOnVertOp(initZvals, initOmega, tarZvals, tarOmega);
-        }
-		editModel->initialization(initZvals, initOmega, tarZvals, tarOmega, numFrames - 2, true);
+//         if(!isLoadTar)
+//         {
+//             editModel->editCWFBasedOnVertOp(initZvals, initOmega, tarZvals, tarOmega);
+//         }
+// 		editModel->initialization(initZvals, initOmega, tarZvals, tarOmega, numFrames - 2, true);
 
-		zList = editModel->getVertValsList();
-		omegaList = editModel->getWList();
-		ampList = editModel->getRefAmpList();
+// 		zList = editModel->getVertValsList();
+// 		omegaList = editModel->getWList();
+// 		ampList = editModel->getRefAmpList();
 
-	}
-	else
-	{
-		buildEditModel(triV, triMesh, vertOpts, faceFlags, quadOrder, spatialAmpRatio, spatialEdgeRatio, spatialKnoppelRatio, effectivedistFactor, editModel);
-		editModel->initialization(zList, omegaList, ampList, omegaList);
-	}
+// 	}
+// 	else
+// 	{
+// 		buildEditModel(triV, triMesh, vertOpts, faceFlags, quadOrder, spatialAmpRatio, spatialEdgeRatio, spatialKnoppelRatio, effectivedistFactor, editModel);
+// 		editModel->initialization(zList, omegaList, ampList, omegaList);
+// 	}
 	
 
-	return true;
-}
+// 	return true;
+// }
 
-bool readFaces(std::string &facesFile, Eigen::MatrixXi &triF) 
+bool readFaces(std::string &facesFile) 
 {
     std::ifstream file(facesFile);
     if (!file.is_open()) {
@@ -770,9 +722,9 @@ bool loadFaceOmegas(const std::string& filePath, const int& nfaces, Eigen::Matri
     return true;
 }
 
-bool reconstructFaceOmegas(const Eigen::MatrixXd& faceOmegaList2Dinput, const Eigen::MatrixXi& F, const Eigen::MatrixXd& V, Eigen::MatrixXd& faceOmegaList3Dinput, double scale = 1.0)
+bool reconstructFaceOmegas(const Eigen::MatrixXd& faceOmegaList2Dinput, const Eigen::MatrixXd& V, Eigen::MatrixXd& faceOmegaList3Dinput, double scale = 1.0)
 {
-    int num_faces = F.rows();
+    int num_faces = triF.rows();
     if (faceOmegaList2Dinput.rows() != num_faces) {
         std::cerr << "Error: 2D omega input rows must match face count." << std::endl;
         return false;
@@ -784,9 +736,9 @@ bool reconstructFaceOmegas(const Eigen::MatrixXd& faceOmegaList2Dinput, const Ei
     for (int f_idx = 0; f_idx < num_faces; ++f_idx)
     {
         // 1. Get vertex coordinates for face (i, j, k)
-        int i = F(f_idx, 0);
-        int j = F(f_idx, 1);
-        int k = F(f_idx, 2);
+        int i = triF(f_idx, 0);
+        int j = triF(f_idx, 1);
+        int k = triF(f_idx, 2);
 
         Eigen::Vector3d v0 = V.row(i).transpose();
         Eigen::Vector3d v1 = V.row(j).transpose();
@@ -829,7 +781,7 @@ bool reconstructFaceOmegas(const Eigen::MatrixXd& faceOmegaList2Dinput, const Ei
     return true;
 }
 
-void getEdgeOmegas(const Eigen::MatrixXd& V, const MeshConnectivity& triMesh, const Eigen::MatrixXd& vertex_grad_phis, Eigen::VectorXd& edgeOmegaList)
+void getEdgeOmegas(const Eigen::MatrixXd& V, const Eigen::MatrixXd& vertex_grad_phis, Eigen::VectorXd& edgeOmegaList)
 {
     int num_edges = triMesh.nEdges();
     edgeOmegaList.resize(num_edges);
@@ -867,7 +819,7 @@ bool loadSolvedProblem() {
 	std::string faceOmegasFile = "dphisPerFace.csv";
 
 	facesFile = workingFolder + facesFile;
-	readFaces(facesFile, triF);
+	readFaces(facesFile);
 	triMesh = MeshConnectivity(triF);
 
 	//will need to resize triV and ampList
@@ -885,18 +837,17 @@ bool loadSolvedProblem() {
 		std::string curFaceOmegasFile = workingFolder + faceOmegasFile + '.' + std::to_string(i);
 		loadFaceOmegas(curFaceOmegasFile, triV[0].rows(), faceOmegaList2Dinput[i]);
 
-		reconstructFaceOmegas(faceOmegaList2Dinput[i], triF, triV[0], faceOmegaList3Dinput[i]);
+		reconstructFaceOmegas(faceOmegaList2Dinput[i], triV[0], faceOmegaList3Dinput[i]);
 
 		getGradPhisPerVertexLineField(faceOmegaList3Dinput[i], triV[0], triF, vertexOmegaList[i]);
 
 		//convert it to omegalist
-		getEdgeOmegas(triV[0], triMesh, vertexOmegaList[i], omegaList[i]);
+		getEdgeOmegas(triV[0], vertexOmegaList[i], omegaList[i]);
 	}
 
 
 	return true;
 }
-
 
 bool saveProblem()
 {
@@ -945,27 +896,7 @@ bool saveProblem()
 										  {"upsampled_phase", "/upsampledPhase/"}
 								  }
 			}
-	};
-
-	for (int i = 0; i < pickFaces.size(); i++)
-	{
-		curOpt = "None";
-		if (pickFaces[i].freqVecMotion == Enlarge)
-			curOpt = "Enlarge";
-		else if (pickFaces[i].freqVecMotion == Rotate)
-			curOpt = "Rotate";
-		json pfJval =
-		{
-			{"face_id", pickFaces[i].fid},
-			{"effective_radius", pickFaces[i].effectiveRadius},
-			{"interface_dilation", pickFaces[i].interfaceDilation},
-			{"omega_operation_motion", curOpt},
-			{"omega_opereation_value", pickFaces[i].freqVecChangeValue},
-			{"amp_operation_value", pickFaces[i].ampChangeRatio},
-			{"amp_omega_coupling", pickFaces[i].isFreqAmpCoupled}
-		};
-		jval["region_local_details"].push_back(pfJval);
-	}
+	};	
 
 	saveEdgeOmega(workingFolder + "omega.txt", initOmega);
 	saveVertexAmp(workingFolder + "amp.txt", initAmp);
@@ -979,7 +910,7 @@ bool saveProblem()
 		saveVertexZvals(workingFolder + "zvals_tar.txt", tarZvals);
 	}
 
-	igl::writeOBJ(workingFolder + "mesh.obj", triV, triF);
+	igl::writeOBJ(workingFolder + "mesh.obj", triV[0], triF);
 
 	std::string outputFolder = workingFolder + "/optZvals/";
 	mkdir(outputFolder);
@@ -1019,8 +950,8 @@ bool saveForRender()
 	// render information
 	std::string renderFolder = workingFolder + "/render/";
 	mkdir(renderFolder);
-	igl::writeOBJ(renderFolder + "basemesh.obj", triV, triF);
-	igl::writeOBJ(renderFolder + "upmesh.obj", upsampledTriV, upsampledTriF);
+	igl::writeOBJ(renderFolder + "basemesh.obj", triV[0], triF);
+	igl::writeOBJ(renderFolder + "upmesh.obj", upsampledTriV[0], upsampledTriF);
 
 
 	saveFlag4Render(faceFlags, renderFolder + "faceFlags.cvs");
@@ -1056,6 +987,164 @@ bool saveForRender()
 	tbb::parallel_for(rangex, savePerFrame);
 
 	return true;
+}
+
+double computeEnergyAndGradient(
+    const Eigen::VectorXcd& psi,
+    const Eigen::MatrixXi& F,
+    const Eigen::MatrixXd& face_grad_phis_2d,
+    Eigen::VectorXcd& grad) 
+{
+    int num_vertices = psi.size();
+    int num_faces = F.rows();
+    
+    grad.setZero(num_vertices);
+    double total_energy = 0.0;
+
+    for (int f_idx = 0; f_idx < num_faces; ++f_idx) {
+        int i = F(f_idx, 0);
+        int j = F(f_idx, 1);
+        int k = F(f_idx, 2);
+
+        // Get the face-local 2D omega components
+        double c1 = face_grad_phis_2d(f_idx, 0); // component 1
+        double c2 = face_grad_phis_2d(f_idx, 1); // component 2
+        
+        // Edge omegas (w) derived from face components
+        double w_ij = c1;
+        double w_ki = -c2;
+        double w_jk = c2 - c1;
+
+        // --- Forward direction (using w_ij, w_jk, w_ki) ---
+        Complex exp_ij_fwd = std::exp(Complex(0.0, w_ij));
+        Complex exp_jk_fwd = std::exp(Complex(0.0, w_jk));
+        Complex exp_ki_fwd = std::exp(Complex(0.0, w_ki));
+        
+        // Residuals: r_uv = psi[v] - psi[u] * exp(i * w_uv)
+        Complex r_ij = psi(j) - psi(i) * exp_ij_fwd;
+        Complex r_jk = psi(k) - psi(j) * exp_jk_fwd;
+        Complex r_ki = psi(i) - psi(k) * exp_ki_fwd;
+        
+        double E_fwd = std::norm(r_ij) + std::norm(r_jk) + std::norm(r_ki);
+        
+        // --- Reverse direction (using -w) ---
+        // exp(-i * w) = std::exp(Complex(0.0, -w)) = 1.0 / exp(i * w)
+        Complex exp_ij_rev = std::conj(exp_ij_fwd);
+        Complex exp_jk_rev = std::conj(exp_jk_fwd);
+        Complex exp_ki_rev = std::conj(exp_ki_fwd);
+
+        Complex nr_ij = psi(j) - psi(i) * exp_ij_rev;
+        Complex nr_jk = psi(k) - psi(j) * exp_jk_rev;
+        Complex nr_ki = psi(i) - psi(k) * exp_ki_rev;
+
+        double E_rev = std::norm(nr_ij) + std::norm(nr_jk) + std::norm(nr_ki);
+        
+        total_energy += 0.5 * (E_fwd + E_rev);
+
+        // --- Gradient Calculation ---
+        // Gradient for E_fwd:
+        grad(i) += (r_ki * std::conj(exp_ki_fwd) - r_ij * exp_ij_fwd); // Note: Python conjugation is handled implicitly
+        grad(j) += (r_ij * std::conj(exp_ij_fwd) - r_jk * exp_jk_fwd);
+        grad(k) += (r_jk * std::conj(exp_jk_fwd) - r_ki * exp_ki_fwd);
+
+        // Gradient for E_rev:
+        grad(i) += (nr_ki * std::conj(exp_ki_rev) - nr_ij * exp_ij_rev);
+        grad(j) += (nr_ij * std::conj(exp_ij_rev) - nr_jk * exp_jk_rev);
+        grad(k) += (nr_jk * std::conj(exp_jk_rev) - nr_ki * exp_ki_rev);
+    }
+    
+    return total_energy;
+}
+
+void optimizePsi(
+    Eigen::VectorXcd& psi,
+    const Eigen::MatrixXi& F,
+    const Eigen::MatrixXd& face_grad_phis_2d,
+    double lr, 
+    int max_iters, 
+    double tol) 
+{
+    double prev_energy = -1.0;
+    Eigen::VectorXcd grad;
+
+    for (int it = 0; it < max_iters; ++it) {
+        double energy = computeEnergyAndGradient(psi, F, face_grad_phis_2d, grad);
+
+        // Update psi: psi -= lr * grad
+        psi -= lr * grad;
+
+        // Projection: psi /= |psi| (Projection back to unit magnitude)
+        // Eigen's cwiseAbs() computes the magnitude of each complex number
+        psi = psi.cwiseQuotient(psi.cwiseAbs());
+
+        // Convergence check (energy change)
+        if (prev_energy > 0.0 && std::abs(prev_energy - energy) < tol) {
+            std::cout << "Converged at iter " << it << ", energy = " << energy << std::endl;
+            break;
+        }
+
+        prev_energy = energy;
+        // Optionally print energy every 100 iterations
+        if (it % 100 == 0) {
+            std::cout << "Iteration " << it << ", Energy = " << energy << std::endl;
+        }
+    }
+}
+
+void optimizeAndSaveZvals()
+{
+    if (numFrames == 0) return;
+    if (faceOmegaList2Dinput.size() < numFrames) {
+        std::cerr << "Error: Omega list size mismatch with numFrames." << std::endl;
+        return;
+    }
+
+    // Resize the output container to hold all results
+    zList.resize(numFrames);
+    
+    // Placeholder for the Z-values during optimization
+    Eigen::VectorXcd psi_eigen; 
+
+    // Define consistent optimization parameters
+    const double learning_rate = 2e-3;
+    const double tolerance = 1e-6;
+    
+    // Define Iteration Counts
+    const int initial_iters = 2000; // For stabilization from random start (Frame 0)
+    const int subsequent_iters = 20; // For smooth transition between frames (Frame i > 0)
+
+
+    for (int i = 0; i < numFrames; ++i) 
+    {
+        // --- 1. Determine Initialization and Iteration Count ---
+        
+        int max_iters;
+        if (i == 0) {
+            // Frame 0: Start from random initialization, use high iterations
+            max_iters = initial_iters;
+            copyComplexStdVectorToEigen(initZvals, psi_eigen);
+            
+        } else {
+            // Frames i > 0: Use the solution from the previous frame (i-1) as warm start
+            max_iters = subsequent_iters;
+            // Use the solution already stored in zList[i - 1]
+            copyComplexStdVectorToEigen(zList[i - 1], psi_eigen); 
+        }
+
+        // --- 2. Get Input Omega Data for Current Frame ---
+        const Eigen::MatrixXd& faceOmega2D = faceOmegaList2Dinput[i];
+
+        // --- 3. Run Optimization ---
+        std::cout << "\nOptimizing Frame " << i << " (" << max_iters << " iterations)..." << std::endl;
+
+        optimizePsi(psi_eigen, triF, faceOmega2D, learning_rate, max_iters, tolerance);
+
+        // --- 4. Save Result ---
+        // Convert the optimized Eigen vector back to the application's std::vector format and store it.
+        copyComplexEigenToStdVector(psi_eigen, zList[i]);
+        
+        std::cout << "Frame " << i << " Z-values successfully optimized and saved." << std::endl;
+    }
 }
 
 int main(int argc, char** argv)
@@ -1094,7 +1183,11 @@ int main(int argc, char** argv)
 	//need to update the mesh at each point of time too!!! this is over a static mesh
 
 	//initialise zvals as unit valued complex numbers (random)
-	initializeRandomUnitNormZvals(initZvals, triV[0]);
+	initializeRandomUnitNormZvals(triV[0]);
+
+	//go through the optimization process
+	//need to populate zlist
+	optimizeAndSaveZvals();
 
 	// this function requires the upsampled mesh.  (only one frame)
 	// but at the same time, it requires a list of zvals and omegas for wrinkle propagation across frames
