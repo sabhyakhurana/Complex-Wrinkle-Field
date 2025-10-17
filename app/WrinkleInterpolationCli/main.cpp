@@ -57,6 +57,12 @@ std::vector<std::complex<double>> tarZvals;
 // base mesh information list
 std::vector<Eigen::VectorXd> ampList;
 std::vector<Eigen::VectorXd> omegaList;
+
+std::vector<Eigen::MatrixXd> faceOmegaList2Dinput;
+std::vector<Eigen::MatrixXd> faceOmegaList3Dinput;
+
+std::vector<Eigen::MatrixXd> vertexOmegaList;
+
 std::vector<Eigen::MatrixXd> faceOmegaList;
 std::vector<std::vector<std::complex<double>>> zList;
 
@@ -220,6 +226,106 @@ int zuenkoIter = 5;
 static void buildEditModel(const Eigen::MatrixXd& pos, const MeshConnectivity& mesh, const std::vector<VertexOpInfo>& vertexOpts, const Eigen::VectorXi& faceFlag, int quadOrd, double spatialAmpRatio, double spatialEdgeRatio, double spatialKnoppelRatio, int effectivedistFactor, std::shared_ptr<IntrinsicFormula::WrinkleEditingModel>& editModel)
 {
 	editModel = std::make_shared<IntrinsicFormula::WrinkleEditingCWF>(pos, mesh, vertexOpts, faceFlag, quadOrd, spatialAmpRatio, spatialEdgeRatio, spatialKnoppelRatio, effectivedistFactor);
+}
+
+Eigen::Vector3d lineFieldAddition(const std::vector<Eigen::Vector3d>& grad_phi_list) {
+    if (grad_phi_list.empty()) {
+        return Eigen::Vector3d::Zero();
+    }
+
+    Eigen::Vector3d total_vec = Eigen::Vector3d::Zero();
+
+    for (const auto& vec : grad_phi_list) {
+        // Assume the vector is approximately in the X-Z plane (common in wrinkle fields)
+        double norm = vec.norm();
+        // atan2(y, x) -> using Z as the vertical component (y) and X as the horizontal (x)
+        double angle = std::atan2(vec[2], vec[0]);
+
+        // Map to double-angle space: [norm*cos(2*angle), 0, norm*sin(2*angle)]
+        total_vec[0] += norm * std::cos(2.0 * angle); // X component of doubled vector
+        // total_vec[1] += 0.0;                       // Y component remains 0
+        total_vec[2] += norm * std::sin(2.0 * angle); // Z component of doubled vector
+    }
+
+    // Average the doubled vector
+    total_vec /= (double)grad_phi_list.size();
+
+    // Map back to single-angle space
+    double final_norm = total_vec.norm();
+    // atan2(y, x) -> using Z as y, X as x
+    double final_angle = std::atan2(total_vec[2], total_vec[0]);
+
+    // Halve the angle: final_angle / 2
+    Eigen::Vector3d final_vec;
+    final_vec[0] = final_norm * std::cos(final_angle / 2.0); // X component
+    final_vec[1] = 0.0;                                     // Y component
+    final_vec[2] = final_norm * std::sin(final_angle / 2.0); // Z component
+
+    return final_vec;
+}
+
+void getGradPhisPerVertexLineField(const Eigen::MatrixXd& face_grad_phis, const Eigen::MatrixXd& V, const Eigen::MatrixXi& F, Eigen::MatrixXd& vertex_grad_phis) 
+{
+    int num_vertices = V.rows();
+    int num_faces = F.rows();
+    
+    // vertex_phis_list: Stores a list of face omega vectors adjacent to each vertex
+    std::vector<std::vector<Eigen::Vector3d>> vertex_phis_list(num_vertices);
+
+    // 1. Accumulate face vectors per vertex
+    for (int face_idx = 0; face_idx < num_faces; ++face_idx) {
+        Eigen::Vector3d face_vec = face_grad_phis.row(face_idx).transpose();
+        
+        for (int k = 0; k < 3; ++k) {
+            int vertex_idx = F(face_idx, k);
+            vertex_phis_list[vertex_idx].push_back(face_vec);
+        }
+    }
+
+    // 2. Perform Line Field Averaging
+    vertex_grad_phis.resize(num_vertices, 3);
+    
+    for (int i = 0; i < num_vertices; ++i) {
+        // Use the lineFieldAddition helper function
+        Eigen::Vector3d averaged_vec = lineFieldAddition(vertex_phis_list[i]);
+        vertex_grad_phis.row(i) = averaged_vec.transpose();
+    }
+}
+
+void initializeRandomUnitNormZvals(std::vector<std::complex<double>>& initZvals, const Eigen::MatrixXd& triV) 
+{
+    // 1. Determine the number of vertices
+    int nverts = triV.rows();
+    
+    // 2. Resize the container
+    initZvals.resize(nverts);
+
+    // 3. Setup Random Number Generator
+    // Use a high-quality pseudo-random number generator
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    
+    // Define a distribution for the angle (phase) from 0 to 2*pi
+    std::uniform_real_distribution<> distrib(0.0, 2.0 * M_PI); // M_PI is typically defined in cmath or <numbers>
+
+    // 4. Populate initZvals
+    for (int i = 0; i < nverts; ++i) {
+        // Generate a random angle (phi)
+        double angle = distrib(gen);
+        
+        // Magnitude (norm) is fixed at 1.0 for unit norm
+        double magnitude = 1.0; 
+        
+        // Convert polar coordinates (magnitude, angle) to complex number (a + bi)
+        // Re(Z) = magnitude * cos(angle)
+        // Im(Z) = magnitude * sin(angle)
+        double real_part = magnitude * std::cos(angle);
+        double imag_part = magnitude * std::sin(angle);
+        
+        initZvals[i] = std::complex<double>(real_part, imag_part);
+    }
+    
+    std::cout << "Initialized " << nverts << " Z-values with random unit norm." << std::endl;
 }
 
 void updateMagnitudePhase(const std::vector<Eigen::VectorXd>& wFrames, const std::vector<std::vector<std::complex<double>>>& zFrames, 
@@ -621,14 +727,148 @@ bool readVertices(std::string &verticesFile, Eigen::MatrixXd &triV)
     return true;
 }
 
+bool loadFaceOmegas(const std::string& filePath, const int& nfaces, Eigen::MatrixXd& faceOmegaMat)
+{
+    std::ifstream file(filePath);
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open face omegas file: " << filePath << std::endl;
+        return false;
+    }
+
+    faceOmegaMat.resize(nfaces, 2);
+    std::string line;
+    int row = 0;
+
+    while (std::getline(file, line) && row < nfaces) {
+        if (line.empty()) continue;
+
+        std::stringstream ss(line);
+        std::string cell;
+        
+        // Read the two components per face
+        for (int col = 0; col < 2; ++col) {
+            if (!std::getline(ss, cell, ',')) {
+                std::cerr << "Error: Missing component in face omega file at line " << row + 1 << std::endl;
+                return false;
+            }
+            try {
+                faceOmegaMat(row, col) = std::stod(cell);
+            } catch (const std::exception& e) {
+                std::cerr << "Error converting face omega value at line " << row + 1 << ": " << e.what() << std::endl;
+                return false;
+            }
+        }
+        row++;
+    }
+
+    if (row != nfaces) {
+        std::cerr << "Error: Expected " << nfaces << " lines but read " << row << std::endl;
+        return false;
+    }
+
+    std::cout << "Successfully read " << nfaces << " face omegas." << std::endl;
+    return true;
+}
+
+bool reconstructFaceOmegas(const Eigen::MatrixXd& faceOmegaList2Dinput, const Eigen::MatrixXi& F, const Eigen::MatrixXd& V, Eigen::MatrixXd& faceOmegaList3Dinput, double scale = 1.0)
+{
+    int num_faces = F.rows();
+    if (faceOmegaList2Dinput.rows() != num_faces) {
+        std::cerr << "Error: 2D omega input rows must match face count." << std::endl;
+        return false;
+    }
+
+    // Resize the output matrix to store the 3D vectors (Nf x 3)
+    faceOmegaList3Dinput.resize(num_faces, 3);
+
+    for (int f_idx = 0; f_idx < num_faces; ++f_idx)
+    {
+        // 1. Get vertex coordinates for face (i, j, k)
+        int i = F(f_idx, 0);
+        int j = F(f_idx, 1);
+        int k = F(f_idx, 2);
+
+        Eigen::Vector3d v0 = V.row(i).transpose();
+        Eigen::Vector3d v1 = V.row(j).transpose();
+        Eigen::Vector3d v2 = V.row(k).transpose();
+
+        // 2. Define the basis vectors (edges v0->v1 and v0->v2)
+        // These are the vectors onto which the 3D omega vector (psi) was projected.
+        Eigen::Vector3d e1 = v1 - v0; // Edge v0->v1
+        Eigen::Vector3d e2 = v2 - v0; // Edge v0->v2
+
+        // 3. Define the system: U * psi = c
+        // U is the 2x3 matrix of basis vectors (e1, e2) as rows.
+        Eigen::MatrixXd U(2, 3);
+        U.row(0) = e1;
+        U.row(1) = e2;
+
+        // c is the 2x1 vector of input components [c1; c2]
+        Eigen::Vector2d c;
+        c(0) = faceOmegaList2Dinput(f_idx, 0); // component along e1
+        c(1) = faceOmegaList2Dinput(f_idx, 1); // component along e2
+
+        // 4. Solve the least squares problem for psi (the 3D vector)
+        // Since U is 2x3, we use the pseudo-inverse (Normal Equations method: U^T * U * psi = U^T * c)
+        
+        // A = U^T * U (3x3 matrix)
+        Eigen::Matrix3d A = U.transpose() * U; 
+        
+        // b = U^T * c (3x1 vector)
+        Eigen::Vector3d b = U.transpose() * c;
+
+        // Solve A * psi_vec = b using LU decomposition (fast and robust for 3x3)
+        // The resulting psi_vec is the minimal norm solution.
+        Eigen::Vector3d psi_vec = A.lu().solve(b);
+
+        // 5. Apply optional scaling and store
+        faceOmegaList3Dinput.row(f_idx) = (psi_vec * scale).transpose();
+    }
+    
+    std::cout << "Successfully reconstructed 3D face omegas for " << num_faces << " faces." << std::endl;
+    return true;
+}
+
+void getEdgeOmegas(const Eigen::MatrixXd& V, const MeshConnectivity& triMesh, const Eigen::MatrixXd& vertex_grad_phis, Eigen::VectorXd& edgeOmegaList)
+{
+    int num_edges = triMesh.nEdges();
+    edgeOmegaList.resize(num_edges);
+
+    for (int edge_id = 0; edge_id < num_edges; ++edge_id)
+    {
+        // Get the two vertices (i, j) connected by the edge
+        int i = triMesh.edgeVertex(edge_id, 0);
+        int j = triMesh.edgeVertex(edge_id, 1);
+        
+        // 1. Edge vector
+        Eigen::Vector3d V_i = V.row(i).transpose();
+        Eigen::Vector3d V_j = V.row(j).transpose();
+        Eigen::Vector3d edge_vec = V_j - V_i; // Direction i -> j
+
+        // 2. Average per-vertex omega field
+        Eigen::Vector3d grad_phi_i = vertex_grad_phis.row(i).transpose();
+        Eigen::Vector3d grad_phi_j = vertex_grad_phis.row(j).transpose();
+        Eigen::Vector3d avg_grad_phi = 0.5 * (grad_phi_i + grad_phi_j);
+
+        // 3. Projection (Dot Product)
+        // grad_along_edge = omega_ij
+        double grad_along_edge = avg_grad_phi.dot(edge_vec);
+        
+        // Store the result
+        edgeOmegaList(edge_id) = grad_along_edge;
+    }
+}
+
 bool loadSolvedProblem() {
 
 	std::string verticesFile = "vertices.csv";
 	std::string facesFile = "faces.csv";
 	std::string amplitudesFile = "amplitudes.csv";
+	std::string faceOmegasFile = "dphisPerFace.csv";
 
 	facesFile = workingFolder + facesFile;
 	readFaces(facesFile, triF);
+	triMesh = MeshConnectivity(triF);
 
 	//will need to resize triV and ampList
 
@@ -636,15 +876,21 @@ bool loadSolvedProblem() {
 		std::string curVerticesFile = workingFolder + verticesFile + '.' + std::to_string(i);
 		readVertices(curVerticesFile, triV[i]);
 		
-		triMesh = MeshConnectivity(triF);
 		initialization(triV[i], triF, upsampledTriV[i], upsampledTriF);
 
 		std::string curAmplitudesFile = workingFolder + amplitudesFile + '.' + std::to_string(i);
 		loadVertexAmp(curAmplitudesFile, triV[0].rows(), ampList[i]);
 
 		//read face omega list
+		std::string curFaceOmegasFile = workingFolder + faceOmegasFile + '.' + std::to_string(i);
+		loadFaceOmegas(curFaceOmegasFile, triV[0].rows(), faceOmegaList2Dinput[i]);
+
+		reconstructFaceOmegas(faceOmegaList2Dinput[i], triF, triV[0], faceOmegaList3Dinput[i]);
+
+		getGradPhisPerVertexLineField(faceOmegaList3Dinput[i], triV[0], triF, vertexOmegaList[i]);
 
 		//convert it to omegalist
+		getEdgeOmegas(triV[0], triMesh, vertexOmegaList[i], omegaList[i]);
 	}
 
 
@@ -847,6 +1093,8 @@ int main(int argc, char** argv)
 	//updateeverything will handle the upsampling
 	//need to update the mesh at each point of time too!!! this is over a static mesh
 
+	//initialise zvals as unit valued complex numbers (random)
+	initializeRandomUnitNormZvals(initZvals, triV[0]);
 
 	// this function requires the upsampled mesh.  (only one frame)
 	// but at the same time, it requires a list of zvals and omegas for wrinkle propagation across frames
