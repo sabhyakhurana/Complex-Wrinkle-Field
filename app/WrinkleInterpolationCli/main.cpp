@@ -39,7 +39,7 @@
 
 std::vector<VertexOpInfo> vertOpts;
 
-Eigen::MatrixXd triV, upsampledTriV;
+std::vector<Eigen::MatrixXd> triV, upsampledTriV;
 Eigen::MatrixXi triF, upsampledTriF;
 MeshConnectivity triMesh;
 Mesh secMesh, subSecMesh;
@@ -169,8 +169,8 @@ struct PickedFace
 
 			Eigen::VectorXi vertFlags, vertFlagsNew;
 
-			faceFlags2VertFlags(triMesh, triV.rows(), curFaceFlags, vertFlags);
-			faceFlags2VertFlags(triMesh, triV.rows(), curFaceFlagsNew, vertFlagsNew);
+			faceFlags2VertFlags(triMesh, triV[0].rows(), curFaceFlags, vertFlags);
+			faceFlags2VertFlags(triMesh, triV[0].rows(), curFaceFlagsNew, vertFlagsNew);
 
 			for (int i = 0; i < curFaceFlags.rows(); i++)
 			{
@@ -193,57 +193,6 @@ struct PickedFace
 };
 
 std::vector<PickedFace> pickFaces;
-
-
-void buildWrinkleMotions(const std::vector<PickedFace>& faceList, std::vector<VertexOpInfo>& vertOpInfo)
-{
-	int nverts = triV.rows();
-	vertOpInfo.clear();
-	vertOpInfo.resize(nverts, { None, isCoupled, 0, 1 });
-
-	if (isSelectAll)
-	{
-		for (int i = 0; i < nverts; i++)
-		{
-			vertOpts[i] = { selectedMotion, isCoupled, selectedMotionValue, selectedMagValue };
-		}
-	}
-	else
-	{
-		Eigen::VectorXi tmpFlags;
-		tmpFlags.setZero(nverts);
-		int nselectedV = 0;
-
-		// make sure there is no overlap
-		for (auto& pf : faceList)
-		{
-			for (auto& v : pf.effectiveVerts)
-			{
-				if (tmpFlags(v))
-				{
-					std::cerr << "overlap happens on the effective vertices. " << std::endl;
-					exit(EXIT_FAILURE);
-				}
-				tmpFlags(v) = 1;
-				nselectedV++;
-			}
-		}
-
-		std::cout << "num of selected vertices: " << nselectedV << std::endl;
-
-		vertOpInfo.clear();
-		vertOpInfo.resize(nverts, { None, isCoupled, 0, 1 });
-
-		for (auto& pf : faceList)
-		{
-			for (auto& v : pf.effectiveVerts)
-			{
-				vertOpInfo[v] = { pf.freqVecMotion, pf.isFreqAmpCoupled, pf.freqVecChangeValue, pf.ampChangeRatio };
-			}
-		}
-	}
-
-}
 
 bool addSelectedFaces(const PickedFace face, Eigen::VectorXi& curFaceFlags, Eigen::VectorXi& curVertFlags)
 {
@@ -319,7 +268,7 @@ void updateMagnitudePhase(const std::vector<Eigen::VectorXd>& wFrames, const std
 }
 
 
-void updateWrinkles(const Eigen::MatrixXd& V, const Eigen::MatrixXi& F, const std::vector<std::vector<std::complex<double>>>& zFrames, std::vector<Eigen::MatrixXd>& wrinkledVFrames, double scaleRatio, bool isUseV2)
+void updateWrinkles(const std::vector<Eigen::MatrixXd>& V, const Eigen::MatrixXi& F, const std::vector<std::vector<std::complex<double>>>& zFrames, std::vector<Eigen::MatrixXd>& wrinkledVFrames, double scaleRatio, bool isUseV2)
 {
 	std::vector<std::vector<std::complex<double>>> interpZList(zFrames.size());
 	wrinkledVFrames.resize(zFrames.size());
@@ -327,13 +276,13 @@ void updateWrinkles(const Eigen::MatrixXd& V, const Eigen::MatrixXi& F, const st
 	std::vector<std::vector<int>> vertNeiEdges;
 	std::vector<std::vector<int>> vertNeiFaces;
 
-	buildVertexNeighboringInfo(MeshConnectivity(F), V.rows(), vertNeiEdges, vertNeiFaces);
+	buildVertexNeighboringInfo(MeshConnectivity(F), V[0].rows(), vertNeiEdges, vertNeiFaces);
 
 	auto computeWrinkles = [&](const tbb::blocked_range<uint32_t>& range)
 	{
 		for (uint32_t i = range.begin(); i < range.end(); ++i)
 		{
-			getWrinkledMesh(V, F, zFrames[i], &vertNeiFaces, wrinkledVFrames[i], scaleRatio, isUseV2);
+			getWrinkledMesh(V[i], F, zFrames[i], &vertNeiFaces, wrinkledVFrames[i], scaleRatio, isUseV2);
 		}
 	};
 
@@ -342,66 +291,24 @@ void updateWrinkles(const Eigen::MatrixXd& V, const Eigen::MatrixXi& F, const st
 
 }
 
-void updateInterfaces(const std::vector<PickedFace>& faces, Eigen::VectorXi& interFaceFlags)
-{
-	int nfaces = triMesh.nFaces();
-	interFaceFlags.setZero(nfaces);
-
-	for (auto& f : faces)
-	{
-		for (auto& interf : f.interFaces)
-			interFaceFlags(interf) = 1;
-	}
-}
-
-void updateEditionDomain()
-{
-	int nselected = 0;
-	for (int i = 0; i < selectedFids.rows(); i++)
-	{
-		if (selectedFids(i) == 1)
-		{
-			nselected++;
-		}
-	}
-
-	Eigen::VectorXi interfaces;
-	updateInterfaces(pickFaces, interfaces);
-
-	faceFlags = selectedFids;
-	int ninterfaces = 0;
-	for (int i = 0; i < selectedFids.rows(); i++)
-	{
-		if (selectedFids(i) == 0 && interfaces(i) == 1)
-		{
-			ninterfaces++;
-			faceFlags(i) = -1;
-		}
-
-	}
-
-	std::cout << "selected effective faces: " << nselected << ", num of interfaces: " << ninterfaces << std::endl;
-
-	std::cout << "build wrinkle motions. " << std::endl;
-	buildWrinkleMotions(pickFaces, vertOpts);
-
-}
-
 void updateEverythingForSaving()
 {
 	// get interploated amp and phase frames
+	// this is fine, because it does the processing on the base mesh like i need.
 	std::cout << "compute upsampled phase: " << std::endl;
 	updateMagnitudePhase(omegaList, zList, ampFieldsList, phaseFieldsList, upZList);
 
 	std::cout << "compute wrinkle meshes: " << std::endl;
+	//wrinkledVList contains all the frames for the mesh with displaced wrinkles
 	updateWrinkles(upsampledTriV, upsampledTriF, upZList, wrinkledVList, args.ampScale, isUseV2);
 
-
+	//these are actually not used anywhere, i suppose only for visualisation? don't really need
+	//hence, doing it over the base mesh for now
 	std::cout << "compute face vector fields:" << std::endl;
 	faceOmegaList.resize(omegaList.size());
 	for (int i = 0; i < omegaList.size(); i++)
 	{
-		faceOmegaList[i] = intrinsicEdgeVec2FaceVec(omegaList[i], triV, triMesh);
+		faceOmegaList[i] = intrinsicEdgeVec2FaceVec(omegaList[i], triV[0], triMesh);
 	}
 }
 
@@ -425,41 +332,6 @@ void initialization(const Eigen::MatrixXd& triV, const Eigen::MatrixXi& triF, Ei
 	interfaceFids = selectedFids;
 	regEdt = RegionEdition(triMesh, triV.rows());
 	selectedVertices.setZero(triV.rows());
-}
-
-void solveKeyFrames(const std::vector<std::complex<double>>& initzvals, const Eigen::VectorXd& initOmega, const Eigen::VectorXi& faceFlags, std::vector<Eigen::VectorXd>& wFrames, std::vector<std::vector<std::complex<double>>>& zFrames)
-{
-	Eigen::VectorXd x;
-	editModel->setSaveFolder(workingFolder);
-
-	buildEditModel(triV, triMesh, vertOpts, faceFlags, quadOrder, spatialAmpRatio, spatialEdgeRatio, spatialKnoppelRatio, effectivedistFactor, editModel);
-
-	if (tarZvals.empty())
-	{
-		editModel->editCWFBasedOnVertOp(initZvals, initOmega, tarZvals, tarOmega);
-	}
-	editModel->initialization(initZvals, initOmega, tarZvals, tarOmega, numFrames - 2, true);
-
-	editModel->convertList2Variable(x);
-
-	editModel->solveIntermeditateFrames(x, args.numIter, args.gradTol, args.xTol, args.fTol, true, workingFolder);
-	editModel->convertVariable2List(x);
-	ampList = editModel->getRefAmpList();
-
-	std::cout << "get w list" << std::endl;
-	wFrames = editModel->getWList();
-	std::cout << "get z list" << std::endl;
-	zFrames = editModel->getVertValsList();
-
-	std::cout << "check boundary matches: " << std::endl;
-
-	std::cout << "omega match: " << std::endl;
-	std::cout << (wFrames[0] - initOmega).norm() << std::endl;
-	std::cout << (wFrames[wFrames.size() - 1] - tarOmega).norm() << std::endl;
-
-	std::cout << "z match: " << std::endl;
-	std::cout << getZListNorm(zFrames[0]) - getZListNorm(initZvals) << std::endl;
-	std::cout << getZListNorm(zFrames[zFrames.size() - 1]) - getZListNorm(tarZvals) << std::endl;
 }
 
 bool loadProblem()
@@ -517,69 +389,6 @@ bool loadProblem()
 
 	pickFaces.clear();
 
-	if (jval.contains(std::string_view{ "region_local_details" }))
-	{
-		int npicked = jval["region_local_details"].size();
-		for (int i = 0; i < npicked; i++)
-		{
-			PickedFace pf;
-			pf.fid = jval["region_local_details"][i]["face_id"];
-			pf.effectiveRadius = jval["region_local_details"][i]["effective_radius"];
-			pf.interfaceDilation = jval["region_local_details"][i]["interface_dilation"];
-
-			optype = jval["region_local_details"][i]["omega_operation_motion"];
-			if (optype == "None")
-				pf.freqVecMotion = None;
-			else if (optype == "Enlarge")
-				pf.freqVecMotion = Enlarge;
-			else if (optype == "Rotate")
-				pf.freqVecMotion = Rotate;
-			else
-				pf.freqVecMotion = None;
-
-			pf.isFreqAmpCoupled = jval["region_local_details"][i]["amp_omega_coupling"];
-			pf.freqVecChangeValue = jval["region_local_details"][i]["omega_opereation_value"];
-			pf.ampChangeRatio = jval["region_local_details"][i]["amp_operation_value"];
-			
-
-			pf.buildEffectiveFaces(triF.rows());
-			if (!addSelectedFaces(pf, selectedFids, selectedVertices))
-			{
-				std::cerr << "something wrong happened in the store setup file!" << std::endl;
-				exit(EXIT_FAILURE);
-			}
-			pickFaces.push_back(pf);
-		}
-	}
-	std::cout << "num of picked faces: " << pickFaces.size() << std::endl;
-	
-	updateEditionDomain();
-	
-
-	if (jval.contains(std::string_view{ "spatial_ratio" }))
-	{
-		if (jval["spatial_ratio"].contains(std::string_view{ "amp_ratio" }))
-			spatialAmpRatio = jval["spatial_ratio"]["amp_ratio"];
-		else
-			spatialAmpRatio = 1000;
-
-		if (jval["spatial_ratio"].contains(std::string_view{ "edge_ratio" }))
-			spatialEdgeRatio = jval["spatial_ratio"]["edge_ratio"];
-		else
-			spatialEdgeRatio = 1000;
-
-		if (jval["spatial_ratio"].contains(std::string_view{ "knoppel_ratio" }))
-			spatialKnoppelRatio = jval["spatial_ratio"]["knoppel_ratio"];
-		else
-			spatialKnoppelRatio = 1000;
-	}
-	else
-	{
-		spatialAmpRatio = 1000;
-		spatialEdgeRatio = 1000;
-		spatialKnoppelRatio = 1000;
-	}
-
 
 	int nedges = triMesh.nEdges();
 	int nverts = triV.rows();
@@ -620,56 +429,6 @@ bool loadProblem()
 		for (int i = 0; i < initZvals.size(); i++)
 			initAmp(i) = std::abs(initZvals[i]);
 	}
-
-    std::string tarAmpPath = "amp_tar.txt";
-    if (jval.contains(std::string_view{ "tar_amp" }))
-    {
-        tarAmpPath = jval["tar_amp"];
-    }
-    std::string tarOmegaPath = "omega_tar.txt";
-    if (jval.contains(std::string_view{ "tar_omega" }))
-    {
-        tarOmegaPath = jval["tar_omega"];
-    }
-    std::string tarZValsPath = "zvals_tar.txt";
-    if (jval.contains(std::string_view{ "tar_zvals" }))
-    {
-        tarZValsPath = jval["tar_zvals"];
-    }
-    
-    tarOmega.resize(0);
-    tarZvals = {};
-
-	isLoadTar = true;
-
-    if (!loadEdgeOmega(workingFolder + tarOmegaPath, nedges, tarOmega)) {
-        std::cout << "missing tar edge omega file." << std::endl;
-        isLoadTar = false;
-    }
-
-    if (!loadVertexZvals(workingFolder + tarZValsPath, triV.rows(), tarZvals))
-    {
-        std::cout << "missing tar zval file, try to load amp file, and round zvals from amp and omega" << std::endl;
-        if (!loadVertexAmp(workingFolder + tarAmpPath, triV.rows(), tarAmp))
-        {
-            std::cout << "missing tar amp file: " << std::endl;
-			isLoadTar = false;
-        }
-
-        else
-        {
-            Eigen::VectorXd edgeArea, vertArea;
-            edgeArea = getEdgeArea(triV, triMesh);
-            vertArea = getVertArea(triV, triMesh);
-            IntrinsicFormula::roundZvalsFromEdgeOmegaVertexMag(triMesh, tarOmega, tarAmp, edgeArea, vertArea, triV.rows(), tarZvals);
-        }
-    }
-    else
-    {
-        tarAmp.setZero(triV.rows());
-        for (int i = 0; i < tarZvals.size(); i++)
-            tarAmp(i) = std::abs(tarZvals[i]);
-    }
 
 	std::string optZvals = jval["solution"]["opt_zvals"];
 	std::string optOmega = jval["solution"]["opt_omega"];
@@ -736,6 +495,158 @@ bool loadProblem()
 		editModel->initialization(zList, omegaList, ampList, omegaList);
 	}
 	
+
+	return true;
+}
+
+bool readFaces(std::string &facesFile, Eigen::MatrixXi &triF) 
+{
+    std::ifstream file(facesFile);
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open faces file: " << facesFile << std::endl;
+        return false;
+    }
+
+    std::vector<int> face_indices;
+    int num_faces = 0;
+    std::string line;
+
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        
+        std::stringstream ss(line);
+        std::string cell;
+        int count = 0;
+        
+        while (std::getline(ss, cell, ',')) {
+            try {
+                face_indices.push_back(std::stoi(cell));
+                count++;
+            } catch (const std::exception& e) {
+                std::cerr << "Error reading face index: " << e.what() << std::endl;
+                return false;
+            }
+        }
+        
+        if (count != 3) {
+            std::cerr << "Error: Face line does not contain 3 indices." << std::endl;
+            // Depending on strictness, you might return false or skip.
+            // Returning false for strict compliance.
+            return false;
+        }
+        num_faces++;
+    }
+
+    if (num_faces == 0) {
+        triF.resize(0, 3);
+        return true;
+    }
+
+    // Resize and map the flattened vector to the Eigen matrix
+    triF.resize(num_faces, 3);
+    for (int i = 0; i < num_faces; ++i) {
+        triF(i, 0) = face_indices[i * 3];
+        triF(i, 1) = face_indices[i * 3 + 1];
+        triF(i, 2) = face_indices[i * 3 + 2];
+    }
+    
+    std::cout << "Successfully read " << num_faces << " faces." << std::endl;
+    return true;
+}
+
+bool readVertices(std::string &verticesFile, Eigen::MatrixXd &triV)
+{
+    std::ifstream file(verticesFile);
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open vertices file: " << verticesFile << std::endl;
+        return false;
+    }
+
+    std::vector<std::vector<double>> coords;
+    coords.resize(3);
+    
+    int num_lines = 0;
+    std::string line;
+    int vertex_count = -1;
+
+    while (std::getline(file, line) && num_lines < 3) {
+        if (line.empty()) continue;
+        
+        std::stringstream ss(line);
+        std::string cell;
+        int current_count = 0;
+        
+        while (std::getline(ss, cell, ',')) {
+            try {
+                // Remove potential carriage return (\r) if reading files created on Windows
+                if (!cell.empty() && cell.back() == '\r') {
+                    cell.pop_back();
+                }
+                coords[num_lines].push_back(std::stod(cell));
+                current_count++;
+            } catch (const std::exception& e) {
+                std::cerr << "Error reading coordinate: " << e.what() << std::endl;
+                return false;
+            }
+        }
+        
+        if (vertex_count == -1) {
+            vertex_count = current_count;
+        } else if (vertex_count != current_count) {
+            std::cerr << "Error: Coordinate lines have inconsistent vertex counts." << std::endl;
+            return false;
+        }
+        
+        num_lines++;
+    }
+
+    if (num_lines != 3) {
+        std::cerr << "Error: Vertices file must contain exactly 3 coordinate lines (X, Y, Z)." << std::endl;
+        return false;
+    }
+
+    if (vertex_count == 0) {
+        triV.resize(0, 3);
+        return true;
+    }
+
+    triV.resize(vertex_count, 3); 
+    for (int j = 0; j < vertex_count; ++j) {
+        triV(j, 0) = coords[0][j]; // X
+        triV(j, 1) = coords[1][j]; // Y
+        triV(j, 2) = coords[2][j]; // Z
+    }
+    
+    std::cout << "Successfully read " << vertex_count << " vertices." << std::endl;
+    return true;
+}
+
+bool loadSolvedProblem() {
+
+	std::string verticesFile = "vertices.csv";
+	std::string facesFile = "faces.csv";
+	std::string amplitudesFile = "amplitudes.csv";
+
+	facesFile = workingFolder + facesFile;
+	readFaces(facesFile, triF);
+
+	//will need to resize triV and ampList
+
+	for(int i=0; i<numFrames; i++) {
+		std::string curVerticesFile = workingFolder + verticesFile + '.' + std::to_string(i);
+		readVertices(curVerticesFile, triV[i]);
+		
+		triMesh = MeshConnectivity(triF);
+		initialization(triV[i], triF, upsampledTriV[i], upsampledTriF);
+
+		std::string curAmplitudesFile = workingFolder + amplitudesFile + '.' + std::to_string(i);
+		loadVertexAmp(curAmplitudesFile, triV[0].rows(), ampList[i]);
+
+		//read face omega list
+
+		//convert it to omegalist
+	}
+
 
 	return true;
 }
@@ -919,18 +830,26 @@ int main(int argc, char** argv)
 		return app.exit(e);
 	}
 
-	if (!loadProblem())
+	if (!loadSolvedProblem())
 	{
 		std::cout << "failed to load file." << std::endl;
 		return 1;
 	}
 
-	updateEditionDomain();
-	if (args.reOptimize)
-	{
-		// solve for the path from source to target
-		solveKeyFrames(initZvals, initOmega, faceFlags, omegaList, zList);
-	}
+	// if (args.reOptimize)
+	// {
+	// 	// solve for the path from source to target
+	// 	solveKeyFrames(initZvals, initOmega, faceFlags, omegaList, zList);
+	// }
+
+	//need to read from files, i get gradphi and wrinkle amplitudes
+	//need to convert that to zvals and omega for every frame
+	//updateeverything will handle the upsampling
+	//need to update the mesh at each point of time too!!! this is over a static mesh
+
+
+	// this function requires the upsampled mesh.  (only one frame)
+	// but at the same time, it requires a list of zvals and omegas for wrinkle propagation across frames
 	updateEverythingForSaving();
 	
 	saveProblem();

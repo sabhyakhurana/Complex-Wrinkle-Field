@@ -1,14 +1,10 @@
 {
     "init_amp": "amp.txt",
     "init_omega": "omega.txt",
-    "init_zvls": "zvals.txt",
+    "init_zvals": "zvals.txt",
     "mesh_name": "mesh.obj",
     "num_frame": 51,
     "quad_order": 4,
-    "reference": {
-        "ref_amp": "/refAmp/",
-        "ref_omega": "/refOmega/"
-    },
     "region_global_details": {
         "amp_omega_coupling": false,
         "amp_operation_value": 1.0,
@@ -28,6 +24,7 @@
         }
     ],
     "solution": {
+        "opt_amp": "/optAmp/",
         "opt_omega": "/optOmega/",
         "opt_zvals": "/optZvals/",
         "upsampled_amp": "/upsampledAmp/",
@@ -39,6 +36,9 @@
         "edge_ratio": 1000.0,
         "knoppel_ratio": 1000.0
     },
+    "tar_amp": "amp_tar.txt",
+    "tar_omega": "omega_tar.txt",
+    "tar_zvals": "zvals_tar.txt",
     "upsampled_times": 2,
     "wrinkle_amp_ratio": 1.0
 }
