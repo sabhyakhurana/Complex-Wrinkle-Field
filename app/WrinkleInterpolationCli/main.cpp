@@ -80,8 +80,6 @@ std::vector<Eigen::MatrixXd> wrinkledVList;
 // region edition
 RegionEdition regEdt;
 
-int numFrames = 51;
-
 double globalAmpMax = 1;
 double globalAmpMin = 0;
 
@@ -96,8 +94,6 @@ int quadOrder = 4;
 double spatialAmpRatio = 1000;
 double spatialEdgeRatio = 1000;
 double spatialKnoppelRatio = 1000;
-
-std::string workingFolder;
 
 std::shared_ptr<IntrinsicFormula::WrinkleEditingModel> editModel;
 
@@ -125,33 +121,33 @@ int clickedFid = -1;
 int dilationTimes = 10;
 
 bool isUseV2 = false;
-int upsampleTimes = 3;
 
 struct RenderConfig
 {
     int numFrames = 0;
     int upsampleTimes = 0;
+    int ampScale = 1;
+    std::string renderFolder;
     std::string workingFolder;
 
     std::string facesFile = "";
-    std::string verticesPrefix = "";
-    std::string faceOmegasPrefix = "";
-    std::string amplitudesPrefix = "";
+    std::string verticesFile = "";
+    std::string faceOmegasFile = "";
+    std::string amplitudesFile = "";
 
     bool isValid() const {
-        return numFrames > 0 && upsampleTimes >= 0 && !facesFile.empty() && !verticesPrefix.empty();
+        return numFrames > 0 && upsampleTimes >= 0 && !facesFile.empty() && !verticesFile.empty();
     }
-};
+} config;
 
 
-RenderConfig loadRenderConfig(const std::string& jsonFilePath)
+void loadRenderConfig(const std::string& jsonFilePath)
 {
-    RenderConfig config;
-
+    using json = nlohmann::json;
     std::ifstream file(jsonFilePath);
     if (!file.is_open()) {
         std::cerr << "Error: Could not open JSON config file: " << jsonFilePath << std::endl;
-        return config;
+        return;
     }
 
     json j;
@@ -159,28 +155,32 @@ RenderConfig loadRenderConfig(const std::string& jsonFilePath)
         file >> j;
     } catch (const json::parse_error& e) {
         std::cerr << "Error parsing JSON file: " << e.what() << std::endl;
-        return config;
+        return;
     }
 
     std::string filePath = jsonFilePath;
 
     std::replace(filePath.begin(), filePath.end(), '\\', '/'); 
     size_t last_slash = filePath.rfind("/");
+
     if (last_slash != std::string::npos) {
         config.workingFolder = filePath.substr(0, last_slash + 1);
     } else {
         config.workingFolder = "./";
     }
 
-    config.numFrames = j.value("num_frames", 0);
-    config.upsampleTimes = j.value("upsampled_times", 0);
+    config.numFrames = j.value("numFrames", 0);
+    config.upsampleTimes = j.value("upsampledTimes", 0);
+    config.ampScale = j.value("ampScale", 1);
+
+    config.renderFolder = j.value("renderFolder", "");
 
     const auto& files = j.value("files", json::object());
 
-    config.facesFile = files.value("faces_file", "");
-    config.verticesPrefix = files.value("vertices_prefix", "");
-    config.faceOmegasPrefix = files.value("face_omegas_prefix", "");
-    config.amplitudesPrefix = files.value("amplitudes_prefix", "");
+    config.facesFile = files.value("facesFile", "");
+    config.verticesFile = files.value("verticesFile", "");
+    config.faceOmegasFile = files.value("faceOmegasFile", "");
+    config.amplitudesFile = files.value("amplitudesFile", "");
 
     if (!config.isValid()) {
         std::cerr << "Error: JSON configuration is missing required parameters (numFrames, upsampleTimes, vertices_prefix, or faces_file)." << std::endl;
@@ -188,26 +188,16 @@ RenderConfig loadRenderConfig(const std::string& jsonFilePath)
         std::cout << "Configuration loaded successfully from " << config.workingFolder << std::endl;
     }
 
-    return config;
 }
 
-// Default arguments
+//Default arguments
 struct {
 	std::string input;
 	std::string method = "CWF";
-	double gradTol = 1e-6;
-	double xTol = 0;
-	double fTol = 0;
-	int numIter = 1000;
-	double ampScale = 1;
-	bool reOptimize = false;
+    std::string paramsFile = "";
 } args;
 
 using Complex = std::complex<double>;
-
-// --- Utility: Get Z-values from Eigen Matrix ---
-// Note: Assuming Z values are stored in a structure compatible with the application's list format
-// (std::vector<std::complex<double>>)
 
 void copyComplexEigenToStdVector(
     const Eigen::VectorXcd& psi_eigen, 
@@ -219,8 +209,6 @@ void copyComplexEigenToStdVector(
         zvals_std[i] = psi_eigen(i);
     }
 }
-
-// --- Utility: Get Z-values from Std Vector to Eigen Matrix ---
 
 void copyComplexStdVectorToEigen(
     const std::vector<Complex>& zvals_std,
@@ -309,31 +297,20 @@ void getGradPhisPerVertexLineField(const Eigen::MatrixXd& face_grad_phis, const 
 
 void initializeRandomUnitNormZvals(const Eigen::MatrixXd& triV) 
 {
-    // 1. Determine the number of vertices
     int nverts = triV.rows();
     
-    // 2. Resize the container
     initZvals.resize(nverts);
 
-    // 3. Setup Random Number Generator
-    // Use a high-quality pseudo-random number generator
     std::random_device rd;
     std::mt19937 gen(rd());
     
-    // Define a distribution for the angle (phase) from 0 to 2*pi
-    std::uniform_real_distribution<> distrib(0.0, 2.0 * M_PI); // M_PI is typically defined in cmath or <numbers>
+    std::uniform_real_distribution<> distrib(0.0, 2.0 * M_PI);
 
-    // 4. Populate initZvals
     for (int i = 0; i < nverts; ++i) {
-        // Generate a random angle (phi)
         double angle = distrib(gen);
-        
-        // Magnitude (norm) is fixed at 1.0 for unit norm
+
         double magnitude = 1.0; 
         
-        // Convert polar coordinates (magnitude, angle) to complex number (a + bi)
-        // Re(Z) = magnitude * cos(angle)
-        // Im(Z) = magnitude * sin(angle)
         double real_part = magnitude * std::cos(angle);
         double imag_part = magnitude * std::sin(angle);
         
@@ -367,7 +344,7 @@ void updateMagnitudePhase(const std::vector<Eigen::VectorXd>& wFrames, const std
 			std::shared_ptr<ComplexLoop> complexLoopOpt = std::make_shared<ComplexLoopZuenko>();
 			complexLoopOpt->setBndFixFlag(isFixedBnd);
 			complexLoopOpt->SetMesh(secMesh);
-			complexLoopOpt->Subdivide(edgeVec, zFrames[i], subOmegaList[i], upZFrames[i], upsampleTimes);
+			complexLoopOpt->Subdivide(edgeVec, zFrames[i], subOmegaList[i], upZFrames[i], config.upsampleTimes);
 			Mesh tmpMesh = complexLoopOpt->GetMesh();
 
 			subFaceOmegaList[i] = edgeVec2FaceVec(tmpMesh, subOmegaList[i]);
@@ -421,7 +398,7 @@ void updateEverythingForSaving()
 
 	std::cout << "compute wrinkle meshes: " << std::endl;
 	//wrinkledVList contains all the frames for the mesh with displaced wrinkles
-	updateWrinkles(upsampledTriV, upsampledTriF, upZList, wrinkledVList, args.ampScale, isUseV2);
+	updateWrinkles(upsampledTriV, upsampledTriF, upZList, wrinkledVList, config.ampScale, isUseV2);
 
 	//these are actually not used anywhere, i suppose only for visualisation? don't really need
 	//hence, doing it over the base mesh for now
@@ -441,7 +418,7 @@ void getUpsampledMesh(const Eigen::MatrixXd& triV, const Eigen::MatrixXi& triF, 
 	std::shared_ptr<ComplexLoop> complexLoopOpt = std::make_shared<ComplexLoopZuenko>();
 	complexLoopOpt->setBndFixFlag(isFixedBnd);
 	complexLoopOpt->SetMesh(secMesh);
-	complexLoopOpt->meshSubdivide(upsampleTimes);
+	complexLoopOpt->meshSubdivide(config.upsampleTimes);
 	subSecMesh = complexLoopOpt->GetMesh();
 	parseSecMesh(subSecMesh, upsampledTriV, upsampledTriF);
 }
@@ -449,10 +426,6 @@ void getUpsampledMesh(const Eigen::MatrixXd& triV, const Eigen::MatrixXi& triF, 
 void initialization(const Eigen::MatrixXd& triV, const Eigen::MatrixXi& triF, Eigen::MatrixXd& upsampledTriV, Eigen::MatrixXi& upsampledTriF)
 {
 	getUpsampledMesh(triV, triF, upsampledTriV, upsampledTriF);
-	selectedFids.setZero(triMesh.nFaces());
-	interfaceFids = selectedFids;
-	regEdt = RegionEdition(triMesh, triV.rows());
-	selectedVertices.setZero(triV.rows());
 }
 
 // bool loadProblem()
@@ -671,11 +644,11 @@ bool readFaces(std::string &facesFile)
         triF(i, 2) = face_indices[i * 3 + 2];
     }
     
-    std::cout << "Successfully read " << num_faces << " faces." << std::endl;
+    //std::cout << "Successfully read " << num_faces << " faces." << std::endl;
     return true;
 }
 
-bool readVertices(std::string &verticesFile, Eigen::MatrixXd &triV)
+bool readVertices(std::string &verticesFile, Eigen::MatrixXd &triVframe)
 {
     std::ifstream file(verticesFile);
     if (!file.is_open()) {
@@ -727,18 +700,18 @@ bool readVertices(std::string &verticesFile, Eigen::MatrixXd &triV)
     }
 
     if (vertex_count == 0) {
-        triV.resize(0, 3);
+        triVframe.resize(0, 3);
         return true;
     }
 
-    triV.resize(vertex_count, 3); 
+    triVframe.resize(vertex_count, 3); 
     for (int j = 0; j < vertex_count; ++j) {
-        triV(j, 0) = coords[0][j]; // X
-        triV(j, 1) = coords[1][j]; // Y
-        triV(j, 2) = coords[2][j]; // Z
+        triVframe(j, 0) = coords[0][j]; // X
+        triVframe(j, 1) = coords[1][j]; // Y
+        triVframe(j, 2) = coords[2][j]; // Z
     }
     
-    std::cout << "Successfully read " << vertex_count << " vertices." << std::endl;
+    //std::cout << "Successfully read " << vertex_count << " vertices." << std::endl;
     return true;
 }
 
@@ -750,51 +723,70 @@ bool loadFaceOmegas(const std::string& filePath, const int& nfaces, Eigen::Matri
         return false;
     }
 
+    // Resize the output matrix to the standard format: Nfaces x 2 components
     faceOmegaMat.resize(nfaces, 2);
     std::string line;
-    int row = 0;
+    int row_count = 0;
 
-    while (std::getline(file, line) && row < nfaces) {
+    // We expect exactly two lines (one for each component)
+    while (std::getline(file, line) && row_count < 2) 
+    {
         if (line.empty()) continue;
 
         std::stringstream ss(line);
         std::string cell;
+        int col = 0;
         
-        // Read the two components per face
-        for (int col = 0; col < 2; ++col) {
-            if (!std::getline(ss, cell, ',')) {
-                std::cerr << "Error: Missing component in face omega file at line " << row + 1 << std::endl;
+        // Read values for the current component across all faces
+        while (std::getline(ss, cell, ',')) 
+        {
+            // If we've read more faces than expected, something is wrong
+            if (col >= nfaces) {
+                std::cerr << "Error: Row " << row_count + 1 << " has more than " << nfaces << " components." << std::endl;
                 return false;
             }
+
             try {
-                faceOmegaMat(row, col) = std::stod(cell);
+                // Store the value:
+                // faceOmegaMat(face_index, component_index)
+                // Current face index is 'col'. Current component index is 'row_count'.
+                faceOmegaMat(col, row_count) = std::stod(cell);
             } catch (const std::exception& e) {
-                std::cerr << "Error converting face omega value at line " << row + 1 << ": " << e.what() << std::endl;
+                std::cerr << "Error converting face omega value in row " << row_count + 1 << ", column " << col + 1 << ": " << e.what() << std::endl;
                 return false;
             }
+            col++;
         }
-        row++;
+        
+        // Check if the number of faces read matches the expected count
+        if (col != nfaces) {
+            std::cerr << "Error: Row " << row_count + 1 << " read " << col << " components, expected " << nfaces << "." << std::endl;
+            return false;
+        }
+
+        row_count++;
     }
 
-    if (row != nfaces) {
-        std::cerr << "Error: Expected " << nfaces << " lines but read " << row << std::endl;
+    // Final check to ensure exactly 2 rows were processed
+    if (row_count != 2) {
+        std::cerr << "Error: Expected 2 rows in the file but read " << row_count << "." << std::endl;
         return false;
     }
 
-    std::cout << "Successfully read " << nfaces << " face omegas." << std::endl;
+    //std::cout << "Successfully read and transposed " << nfaces << " face omegas." << std::endl;
     return true;
 }
 
-bool reconstructFaceOmegas(const Eigen::MatrixXd& faceOmegaList2Dinput, const Eigen::MatrixXd& V, Eigen::MatrixXd& faceOmegaList3Dinput, double scale = 1.0)
+bool reconstructFaceOmegas(const Eigen::MatrixXd& faceOmegaList2DinputFrame, const Eigen::MatrixXd& V, Eigen::MatrixXd& faceOmegaList3DinputFrame, double scale = 1.0)
 {
     int num_faces = triF.rows();
-    if (faceOmegaList2Dinput.rows() != num_faces) {
+    if (faceOmegaList2DinputFrame.rows() != num_faces) {
         std::cerr << "Error: 2D omega input rows must match face count." << std::endl;
         return false;
     }
 
     // Resize the output matrix to store the 3D vectors (Nf x 3)
-    faceOmegaList3Dinput.resize(num_faces, 3);
+    faceOmegaList3DinputFrame.resize(num_faces, 3);
 
     for (int f_idx = 0; f_idx < num_faces; ++f_idx)
     {
@@ -820,8 +812,8 @@ bool reconstructFaceOmegas(const Eigen::MatrixXd& faceOmegaList2Dinput, const Ei
 
         // c is the 2x1 vector of input components [c1; c2]
         Eigen::Vector2d c;
-        c(0) = faceOmegaList2Dinput(f_idx, 0); // component along e1
-        c(1) = faceOmegaList2Dinput(f_idx, 1); // component along e2
+        c(0) = faceOmegaList2DinputFrame(f_idx, 0); // component along e1
+        c(1) = faceOmegaList2DinputFrame(f_idx, 1); // component along e2
 
         // 4. Solve the least squares problem for psi (the 3D vector)
         // Since U is 2x3, we use the pseudo-inverse (Normal Equations method: U^T * U * psi = U^T * c)
@@ -837,10 +829,10 @@ bool reconstructFaceOmegas(const Eigen::MatrixXd& faceOmegaList2Dinput, const Ei
         Eigen::Vector3d psi_vec = A.lu().solve(b);
 
         // 5. Apply optional scaling and store
-        faceOmegaList3Dinput.row(f_idx) = (psi_vec * scale).transpose();
+        faceOmegaList3DinputFrame.row(f_idx) = (psi_vec * scale).transpose();
     }
     
-    std::cout << "Successfully reconstructed 3D face omegas for " << num_faces << " faces." << std::endl;
+    // std::cout << "Successfully reconstructed 3D face omegas for " << num_faces << " faces." << std::endl;
     return true;
 }
 
@@ -876,29 +868,38 @@ void getEdgeOmegas(const Eigen::MatrixXd& V, const Eigen::MatrixXd& vertex_grad_
 
 bool loadSolvedProblem() {
 
-	std::string verticesFile = "vertices.csv";
-	std::string facesFile = "faces.csv";
-	std::string amplitudesFile = "amplitudes.csv";
-	std::string faceOmegasFile = "dphisPerFace.csv";
+	std::string verticesFile = config.verticesFile;
+	std::string facesFile = config.facesFile;
+	std::string amplitudesFile = config.amplitudesFile;
+	std::string faceOmegasFile = config.faceOmegasFile;
 
-	facesFile = workingFolder + facesFile;
+	facesFile = config.workingFolder + facesFile;
 	readFaces(facesFile);
 	triMesh = MeshConnectivity(triF);
 
 	//will need to resize triV and ampList
+    triV.resize(config.numFrames);
+    upsampledTriV.resize(config.numFrames);
+    ampList.resize(config.numFrames);
+    faceOmegaList2Dinput.resize(config.numFrames);
+    faceOmegaList3Dinput.resize(config.numFrames);
 
-	for(int i=0; i<numFrames; i++) {
-		std::string curVerticesFile = workingFolder + verticesFile + '.' + std::to_string(i);
+    //need to resize vertexOmegaList
+    vertexOmegaList.resize(config.numFrames);
+    omegaList.resize(config.numFrames);
+
+	for(int i=0; i<config.numFrames; i++) {
+		std::string curVerticesFile = config.workingFolder + verticesFile + '.' + std::to_string(i);
 		readVertices(curVerticesFile, triV[i]);
 		
 		initialization(triV[i], triF, upsampledTriV[i], upsampledTriF);
 
-		std::string curAmplitudesFile = workingFolder + amplitudesFile + '.' + std::to_string(i);
+		std::string curAmplitudesFile = config.workingFolder + amplitudesFile + '.' + std::to_string(i);
 		loadVertexAmp(curAmplitudesFile, triV[0].rows(), ampList[i]);
 
 		//read face omega list
-		std::string curFaceOmegasFile = workingFolder + faceOmegasFile + '.' + std::to_string(i);
-		loadFaceOmegas(curFaceOmegasFile, triV[0].rows(), faceOmegaList2Dinput[i]);
+		std::string curFaceOmegasFile = config.workingFolder + faceOmegasFile + '.' + std::to_string(i);
+		loadFaceOmegas(curFaceOmegasFile, triF.rows(), faceOmegaList2Dinput[i]);
 
 		reconstructFaceOmegas(faceOmegaList2Dinput[i], triV[0], faceOmegaList3Dinput[i]);
 
@@ -912,112 +913,113 @@ bool loadSolvedProblem() {
 	return true;
 }
 
-bool saveProblem()
-{
-	std::string curOpt = "None";
-	if (selectedMotion == Enlarge)
-		curOpt = "Enlarge";
-	else if (selectedMotion == Rotate)
-		curOpt = "Rotate";
+// bool saveProblem()
+// {
+// 	std::string curOpt = "None";
+// 	if (selectedMotion == Enlarge)
+// 		curOpt = "Enlarge";
+// 	else if (selectedMotion == Rotate)
+// 		curOpt = "Rotate";
 
-	using json = nlohmann::json;
-	json jval =
-	{
-			{"mesh_name",         "mesh.obj"},
-			{"num_frame",         zList.size()},
-            {"wrinkle_amp_ratio", args.ampScale},
-			{"quad_order",        quadOrder},
-			{"spatial_ratio",     {
-										   {"amp_ratio", spatialAmpRatio},
-										   {"edge_ratio", spatialEdgeRatio},
-										   {"knoppel_ratio", spatialKnoppelRatio}
+// 	using json = nlohmann::json;
+// 	json jval =
+// 	{
+// 			{"mesh_name",         "mesh.obj"},
+// 			{"num_frame",         zList.size()},
+//             {"wrinkle_amp_ratio", config.ampScale},
+// 			{"quad_order",        quadOrder},
+// 			{"spatial_ratio",     {
+// 										   {"amp_ratio", spatialAmpRatio},
+// 										   {"edge_ratio", spatialEdgeRatio},
+// 										   {"knoppel_ratio", spatialKnoppelRatio}
 
-								  }
-			},
-			{"upsampled_times",  upsampleTimes},
-			{"init_omega",        "omega.txt"},
-			{"init_amp",          "amp.txt"},
-			{"init_zvals",        "zvals.txt"},
-			{"tar_omega",         "omega_tar.txt"},
-			{"tar_amp",           "amp_tar.txt"},
-			{"tar_zvals",         "zvals_tar.txt"},
-			{"region_global_details",	  {
-										{"select_all", isSelectAll},
-										{"omega_operation_motion", curOpt},
-										{"omega_operation_value", selectedMotionValue},
-										{"amp_omega_coupling", isCoupled},
-										{"amp_operation_value", selectedMagValue}
-								  }
-			},
-			{
-			 "solution",          {
-										  {"opt_amp", "/optAmp/"},
-										  {"opt_zvals", "/optZvals/"},
-										  {"opt_omega", "/optOmega/"},
-										  {"wrinkle_mesh", "/wrinkledMesh/"},
-										  {"upsampled_amp", "/upsampledAmp/"},
-										  {"upsampled_phase", "/upsampledPhase/"}
-								  }
-			}
-	};	
+// 								  }
+// 			},
+// 			{"upsampled_times",  config.upsampleTimes},
+// 			{"init_omega",        "omega.txt"},
+// 			{"init_amp",          "amp.txt"},
+// 			{"init_zvals",        "zvals.txt"},
+// 			{"tar_omega",         "omega_tar.txt"},
+// 			{"tar_amp",           "amp_tar.txt"},
+// 			{"tar_zvals",         "zvals_tar.txt"},
+// 			{"region_global_details",	  {
+// 										{"select_all", isSelectAll},
+// 										{"omega_operation_motion", curOpt},
+// 										{"omega_operation_value", selectedMotionValue},
+// 										{"amp_omega_coupling", isCoupled},
+// 										{"amp_operation_value", selectedMagValue}
+// 								  }
+// 			},
+// 			{
+// 			 "solution",          {
+// 										  {"opt_amp", "/optAmp/"},
+// 										  {"opt_zvals", "/optZvals/"},
+// 										  {"opt_omega", "/optOmega/"},
+// 										  {"wrinkle_mesh", "/wrinkledMesh/"},
+// 										  {"upsampled_amp", "/upsampledAmp/"},
+// 										  {"upsampled_phase", "/upsampledPhase/"}
+// 								  }
+// 			}
+// 	};	
 
-	saveEdgeOmega(workingFolder + "omega.txt", initOmega);
-	saveVertexAmp(workingFolder + "amp.txt", initAmp);
-	saveVertexZvals(workingFolder + "zvals.txt", initZvals);
+// 	saveEdgeOmega(workingFolder + "omega.txt", initOmega);
+// 	saveVertexAmp(workingFolder + "amp.txt", initAmp);
+// 	saveVertexZvals(workingFolder + "zvals.txt", initZvals);
 
-	if (isLoadTar)
-	{
-		std::cout << "save target" << std::endl;
-		saveEdgeOmega(workingFolder + "omega_tar.txt", tarOmega);
-		saveVertexAmp(workingFolder + "amp_tar.txt", tarAmp);
-		saveVertexZvals(workingFolder + "zvals_tar.txt", tarZvals);
-	}
+// 	if (isLoadTar)
+// 	{
+// 		std::cout << "save target" << std::endl;
+// 		saveEdgeOmega(workingFolder + "omega_tar.txt", tarOmega);
+// 		saveVertexAmp(workingFolder + "amp_tar.txt", tarAmp);
+// 		saveVertexZvals(workingFolder + "zvals_tar.txt", tarZvals);
+// 	}
 
-	igl::writeOBJ(workingFolder + "mesh.obj", triV[0], triF);
+// 	igl::writeOBJ(workingFolder + "mesh.obj", triV[0], triF);
 
-	std::string outputFolder = workingFolder + "/optZvals/";
-	mkdir(outputFolder);
+// 	std::string outputFolder = workingFolder + "/optZvals/";
+// 	mkdir(outputFolder);
 
-	std::string omegaOutputFolder = workingFolder + "/optOmega/";
-	mkdir(omegaOutputFolder);
+// 	std::string omegaOutputFolder = workingFolder + "/optOmega/";
+// 	mkdir(omegaOutputFolder);
 
-	std::string ampOutputFolder = workingFolder + "/optAmp/";
-	mkdir(ampOutputFolder);
-
-
-	int nframes = zList.size();
-	auto savePerFrame = [&](const tbb::blocked_range<uint32_t>& range)
-	{
-		for (uint32_t i = range.begin(); i < range.end(); ++i)
-		{
-
-			saveVertexZvals(outputFolder + "zvals_" + std::to_string(i) + ".txt", zList[i]);
-			saveEdgeOmega(omegaOutputFolder + "omega_" + std::to_string(i) + ".txt", omegaList[i]);
-			saveVertexAmp(ampOutputFolder + "amp_" + std::to_string(i) + ".txt", ampList[i]);
-		}
-	};
-
-	tbb::blocked_range<uint32_t> rangex(0u, (uint32_t)nframes, GRAIN_SIZE);
-	tbb::parallel_for(rangex, savePerFrame);
+// 	std::string ampOutputFolder = workingFolder + "/optAmp/";
+// 	mkdir(ampOutputFolder);
 
 
-	std::ofstream o(args.input);
-	o << std::setw(4) << jval << std::endl;
-	std::cout << "save file in: " << args.input << std::endl;
+// 	int nframes = zList.size();
+// 	auto savePerFrame = [&](const tbb::blocked_range<uint32_t>& range)
+// 	{
+// 		for (uint32_t i = range.begin(); i < range.end(); ++i)
+// 		{
 
-	return true;
-}
+// 			saveVertexZvals(outputFolder + "zvals_" + std::to_string(i) + ".txt", zList[i]);
+// 			saveEdgeOmega(omegaOutputFolder + "omega_" + std::to_string(i) + ".txt", omegaList[i]);
+// 			saveVertexAmp(ampOutputFolder + "amp_" + std::to_string(i) + ".txt", ampList[i]);
+// 		}
+// 	};
+
+// 	tbb::blocked_range<uint32_t> rangex(0u, (uint32_t)nframes, GRAIN_SIZE);
+// 	tbb::parallel_for(rangex, savePerFrame);
+
+
+// 	std::ofstream o(args.input);
+// 	o << std::setw(4) << jval << std::endl;
+// 	std::cout << "save file in: " << args.input << std::endl;
+
+// 	return true;
+// }
 
 bool saveForRender()
 {
 	// render information
-	std::string renderFolder = workingFolder + "/render/";
+	std::string renderFolder = config.workingFolder + config.renderFolder;
 	mkdir(renderFolder);
-	igl::writeOBJ(renderFolder + "basemesh.obj", triV[0], triF);
-	igl::writeOBJ(renderFolder + "upmesh.obj", upsampledTriV[0], upsampledTriF);
+
+	igl::writeOBJ(renderFolder + "/basemesh.obj", triV[0], triF);
+	igl::writeOBJ(renderFolder + "/upmesh.obj", upsampledTriV[0], upsampledTriF);
 
 
-	saveFlag4Render(faceFlags, renderFolder + "faceFlags.cvs");
+	saveFlag4Render(faceFlags, renderFolder + "/faceFlags.cvs");
 
 	std::string outputFolderAmp = renderFolder + "/upsampledAmp/";
 	mkdir(outputFolderAmp);
@@ -1156,54 +1158,43 @@ void optimizePsi(
 
 void optimizeAndSaveZvals()
 {
-    if (numFrames == 0) return;
-    if (faceOmegaList2Dinput.size() < numFrames) {
+    if (config.numFrames == 0) return;
+    if (faceOmegaList2Dinput.size() < config.numFrames) {
         std::cerr << "Error: Omega list size mismatch with numFrames." << std::endl;
         return;
     }
 
-    // Resize the output container to hold all results
-    zList.resize(numFrames);
-    
-    // Placeholder for the Z-values during optimization
+    zList.resize(config.numFrames);
+
     Eigen::VectorXcd psi_eigen; 
 
-    // Define consistent optimization parameters
     const double learning_rate = 2e-3;
     const double tolerance = 1e-6;
     
     // Define Iteration Counts
-    const int initial_iters = 2000; // For stabilization from random start (Frame 0)
-    const int subsequent_iters = 20; // For smooth transition between frames (Frame i > 0)
+    const int initial_iters = 2000;
+    const int subsequent_iters = 20;
 
 
-    for (int i = 0; i < numFrames; ++i) 
+    for (int i = 0; i < config.numFrames; ++i) 
     {
-        // --- 1. Determine Initialization and Iteration Count ---
         
         int max_iters;
         if (i == 0) {
-            // Frame 0: Start from random initialization, use high iterations
             max_iters = initial_iters;
             copyComplexStdVectorToEigen(initZvals, psi_eigen);
             
         } else {
-            // Frames i > 0: Use the solution from the previous frame (i-1) as warm start
             max_iters = subsequent_iters;
-            // Use the solution already stored in zList[i - 1]
             copyComplexStdVectorToEigen(zList[i - 1], psi_eigen); 
         }
 
-        // --- 2. Get Input Omega Data for Current Frame ---
         const Eigen::MatrixXd& faceOmega2D = faceOmegaList2Dinput[i];
 
-        // --- 3. Run Optimization ---
         std::cout << "\nOptimizing Frame " << i << " (" << max_iters << " iterations)..." << std::endl;
 
         optimizePsi(psi_eigen, triF, faceOmega2D, learning_rate, max_iters, tolerance);
 
-        // --- 4. Save Result ---
-        // Convert the optimized Eigen vector back to the application's std::vector format and store it.
         copyComplexEigenToStdVector(psi_eigen, zList[i]);
         
         std::cout << "Frame " << i << " Z-values successfully optimized and saved." << std::endl;
@@ -1213,13 +1204,7 @@ void optimizeAndSaveZvals()
 int main(int argc, char** argv)
 {
 	CLI::App app("Wrinkle Interpolation");
-	app.add_option("input,-i,--input", args.input, "Input model")->required()->check(CLI::ExistingFile);
-	app.add_option("-g,--gradTol", args.gradTol, "The gradient tolerance for optimization.");
-	app.add_option("-x,--xTol", args.xTol, "The variable update tolerance for optimization.");
-	app.add_option("-f,--fTol", args.fTol, "The functio value update tolerance for optimization.");
-	app.add_option("-n,--numIter", args.numIter, "The number of iteration for optimization.");
-	app.add_option("-a,--ampScaling", args.ampScale, "The amplitude scaling for wrinkled surface upsampling.");
-	app.add_flag("-r,--reoptimize", args.reOptimize, "Whether to reoptimize the input, default is false");
+	app.add_option("input,-i,--input", args.paramsFile, "Input model")->required()->check(CLI::ExistingFile);
 
 	try {
 		app.parse(argc, argv);
@@ -1227,6 +1212,8 @@ int main(int argc, char** argv)
 	catch (const CLI::ParseError& e) {
 		return app.exit(e);
 	}
+
+    loadRenderConfig(args.paramsFile);
 
 	if (!loadSolvedProblem())
 	{
@@ -1256,7 +1243,7 @@ int main(int argc, char** argv)
 	// but at the same time, it requires a list of zvals and omegas for wrinkle propagation across frames
 	updateEverythingForSaving();
 	
-	saveProblem();
+	// saveProblem();
 	saveForRender();
 
 	return 0;

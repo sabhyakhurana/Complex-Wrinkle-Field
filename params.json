@@ -1,0 +1,12 @@
+{
+  "numFrames": 100,
+  "upsampledTimes": 0,
+  "ampScale": 1,
+  "renderFolder": "../python-testbed/sim_data_2/render",
+  "files": {
+    "facesFile": "../python-testbed/sim_data_2/1758629947/faces/faces.csv",
+    "verticesFile": "../python-testbed/sim_data_2/1758629947/positions/positions.csv",
+    "faceOmegasFile": "../python-testbed/sim_data_2/1758629947/dphisPerFace/dphisPerFace.csv",
+    "amplitudesFile": "../python-testbed/sim_data_2/1758629947/amplitudes/amplitudes.csv"
+  }
+}
