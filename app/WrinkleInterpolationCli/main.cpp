@@ -127,6 +127,69 @@ int dilationTimes = 10;
 bool isUseV2 = false;
 int upsampleTimes = 3;
 
+struct RenderConfig
+{
+    int numFrames = 0;
+    int upsampleTimes = 0;
+    std::string workingFolder;
+
+    std::string facesFile = "";
+    std::string verticesPrefix = "";
+    std::string faceOmegasPrefix = "";
+    std::string amplitudesPrefix = "";
+
+    bool isValid() const {
+        return numFrames > 0 && upsampleTimes >= 0 && !facesFile.empty() && !verticesPrefix.empty();
+    }
+};
+
+
+RenderConfig loadRenderConfig(const std::string& jsonFilePath)
+{
+    RenderConfig config;
+
+    std::ifstream file(jsonFilePath);
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open JSON config file: " << jsonFilePath << std::endl;
+        return config;
+    }
+
+    json j;
+    try {
+        file >> j;
+    } catch (const json::parse_error& e) {
+        std::cerr << "Error parsing JSON file: " << e.what() << std::endl;
+        return config;
+    }
+
+    std::string filePath = jsonFilePath;
+
+    std::replace(filePath.begin(), filePath.end(), '\\', '/'); 
+    size_t last_slash = filePath.rfind("/");
+    if (last_slash != std::string::npos) {
+        config.workingFolder = filePath.substr(0, last_slash + 1);
+    } else {
+        config.workingFolder = "./";
+    }
+
+    config.numFrames = j.value("num_frames", 0);
+    config.upsampleTimes = j.value("upsampled_times", 0);
+
+    const auto& files = j.value("files", json::object());
+
+    config.facesFile = files.value("faces_file", "");
+    config.verticesPrefix = files.value("vertices_prefix", "");
+    config.faceOmegasPrefix = files.value("face_omegas_prefix", "");
+    config.amplitudesPrefix = files.value("amplitudes_prefix", "");
+
+    if (!config.isValid()) {
+        std::cerr << "Error: JSON configuration is missing required parameters (numFrames, upsampleTimes, vertices_prefix, or faces_file)." << std::endl;
+    } else {
+        std::cout << "Configuration loaded successfully from " << config.workingFolder << std::endl;
+    }
+
+    return config;
+}
 
 // Default arguments
 struct {
