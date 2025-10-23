@@ -428,171 +428,6 @@ void initialization(const Eigen::MatrixXd& triV, const Eigen::MatrixXi& triF, Ei
 	getUpsampledMesh(triV, triF, upsampledTriV, upsampledTriF);
 }
 
-// bool loadProblem()
-// {
-// 	std::string loadFileName = args.input;
-// 	std::cout << "load file in: " << loadFileName << std::endl;
-// 	using json = nlohmann::json;
-// 	std::ifstream inputJson(loadFileName);
-// 	if (!inputJson) {
-// 		std::cerr << "missing json file in " << loadFileName << std::endl;
-// 		return false;
-// 	}
-
-// 	std::string filePath = loadFileName;
-// 	std::replace(filePath.begin(), filePath.end(), '\\', '/'); // handle the backslash issue for windows
-// 	int id = filePath.rfind("/");
-// 	workingFolder = filePath.substr(0, id + 1);
-// 	std::cout << "working folder: " << workingFolder << std::endl;
-
-// 	json jval;
-// 	inputJson >> jval;
-
-// 	std::string meshFile = jval["mesh_name"];
-// 	upsampleTimes = jval["upsampled_times"];
-
-
-// 	meshFile = workingFolder + meshFile;
-// 	igl::readOBJ(meshFile, triV, triF);
-// 	triMesh = MeshConnectivity(triF);
-// 	initialization(triV, triF, upsampledTriV, upsampledTriF);
-	
-
-// 	quadOrder = jval["quad_order"];
-// 	numFrames = jval["num_frame"];
-//     if (jval.contains(std::string_view{ "wrinkle_amp_ratio" }))
-//     {
-//         if(args.ampScale == 1)
-//             args.ampScale = jval["wrinkle_amp_ratio"];
-//     }
-
-// 	isSelectAll = jval["region_global_details"]["select_all"];
-// 	isCoupled = jval["region_global_details"]["amp_omega_coupling"];
-// 	selectedMagValue = jval["region_global_details"]["amp_operation_value"];
-// 	selectedMotionValue = jval["region_global_details"]["omega_operation_value"];
-// 	std::string optype = jval["region_global_details"]["omega_operation_motion"];
-
-// 	if (optype == "None")
-// 		selectedMotion = None;
-// 	else if (optype == "Enlarge")
-// 		selectedMotion = Enlarge;
-// 	else if (optype == "Rotate")
-// 		selectedMotion = Rotate;
-// 	else
-// 		selectedMotion = None;
-
-// 	pickFaces.clear();
-
-
-// 	int nedges = triMesh.nEdges();
-// 	int nverts = triV.rows();
-
-// 	std::string initAmpPath = jval["init_amp"];
-// 	std::string initOmegaPath = jval["init_omega"];
-// 	std::string initZValsPath = "zvals.txt";
-// 	if (jval.contains(std::string_view{ "init_zvals" }))
-// 	{
-// 		initZValsPath = jval["init_zvals"];
-// 	}
-
-// 	if (!loadEdgeOmega(workingFolder + initOmegaPath, nedges, initOmega)) {
-// 		std::cout << "missing init edge omega file." << std::endl;
-// 		return false;
-// 	}
-
-// 	if (!loadVertexZvals(workingFolder + initZValsPath, triV.rows(), initZvals))
-// 	{
-// 		std::cout << "missing init zval file, try to load amp file, and round zvals from amp and omega" << std::endl;
-// 		if (!loadVertexAmp(workingFolder + initAmpPath, triV.rows(), initAmp))
-// 		{
-// 			std::cout << "missing init amp file: " << std::endl;
-// 			return false;
-// 		}
-
-// 		else
-// 		{
-// 			Eigen::VectorXd edgeArea, vertArea;
-// 			edgeArea = getEdgeArea(triV, triMesh);
-// 			vertArea = getVertArea(triV, triMesh);
-// 			IntrinsicFormula::roundZvalsFromEdgeOmegaVertexMag(triMesh, initOmega, initAmp, edgeArea, vertArea, triV.rows(), initZvals);
-// 		}
-// 	}
-// 	else
-// 	{
-// 		initAmp.setZero(triV.rows());
-// 		for (int i = 0; i < initZvals.size(); i++)
-// 			initAmp(i) = std::abs(initZvals[i]);
-// 	}
-
-// 	std::string optZvals = jval["solution"]["opt_zvals"];
-// 	std::string optOmega = jval["solution"]["opt_omega"];
-
-
-
-// 	isLoadOpt = true;
-// 	zList.clear();
-// 	omegaList.clear();
-// 	ampList.clear();
-// 	for (int i = 0; i < numFrames; i++)
-// 	{
-// 		std::string zvalFile = workingFolder + optZvals + "/zvals_" + std::to_string(i) + ".txt";
-// 		std::string edgeOmegaFile = workingFolder + optOmega + "/omega_" + std::to_string(i) + ".txt";
-		
-// 		std::vector<std::complex<double>> zvals;
-// 		Eigen::VectorXd vertAmp;
-
-// 		if (!loadVertexZvals(zvalFile, nverts, zvals))
-// 		{
-// 			isLoadOpt = false;
-// 			break;
-// 		}
-// 		else {
-// 			vertAmp.setZero(zvals.size());
-// 			for (int i = 0; i < zvals.size(); i++) {
-// 				vertAmp[i] = std::abs(zvals[i]);
-// 			}
-// 		}
-
-// 		Eigen::VectorXd edgeOmega;
-// 		if (!loadEdgeOmega(edgeOmegaFile, nedges, edgeOmega)) {
-// 			isLoadOpt = false;
-// 			break;
-// 		}
-
-// 		zList.push_back(zvals);
-// 		omegaList.push_back(edgeOmega);
-// 		ampList.push_back(vertAmp);
-// 	}
-
-// 	if (isLoadOpt)
-// 	{
-// 		std::cout << "load zvals and omegas from file!" << std::endl;
-// 	}
-// 	if (!isLoadOpt)
-// 	{
-// 		buildEditModel(triV, triMesh, vertOpts, faceFlags, quadOrder, spatialAmpRatio, spatialEdgeRatio, spatialKnoppelRatio, effectivedistFactor, editModel);
-
-//         if(!isLoadTar)
-//         {
-//             editModel->editCWFBasedOnVertOp(initZvals, initOmega, tarZvals, tarOmega);
-//         }
-// 		editModel->initialization(initZvals, initOmega, tarZvals, tarOmega, numFrames - 2, true);
-
-// 		zList = editModel->getVertValsList();
-// 		omegaList = editModel->getWList();
-// 		ampList = editModel->getRefAmpList();
-
-// 	}
-// 	else
-// 	{
-// 		buildEditModel(triV, triMesh, vertOpts, faceFlags, quadOrder, spatialAmpRatio, spatialEdgeRatio, spatialKnoppelRatio, effectivedistFactor, editModel);
-// 		editModel->initialization(zList, omegaList, ampList, omegaList);
-// 	}
-	
-
-// 	return true;
-// }
-
 bool readFaces(std::string &facesFile) 
 {
     std::ifstream file(facesFile);
@@ -779,6 +614,7 @@ bool loadFaceOmegas(const std::string& filePath, const int& nfaces, Eigen::Matri
 
 bool reconstructFaceOmegas(const Eigen::MatrixXd& faceOmegaList2DinputFrame, const Eigen::MatrixXd& V, Eigen::MatrixXd& faceOmegaList3DinputFrame, double scale = 1.0)
 {
+
     int num_faces = triF.rows();
     if (faceOmegaList2DinputFrame.rows() != num_faces) {
         std::cerr << "Error: 2D omega input rows must match face count." << std::endl;
@@ -788,8 +624,13 @@ bool reconstructFaceOmegas(const Eigen::MatrixXd& faceOmegaList2DinputFrame, con
     // Resize the output matrix to store the 3D vectors (Nf x 3)
     faceOmegaList3DinputFrame.resize(num_faces, 3);
 
+    // ... (Initial setup, resizing, loop) ...
+    const double GEOM_TOL_SQ = 1e-15; // Tolerance for area squared check
+
     for (int f_idx = 0; f_idx < num_faces; ++f_idx)
     {
+        // ... (Code to calculate v0, v1, v2, e1, e2, c) ...
+
         // 1. Get vertex coordinates for face (i, j, k)
         int i = triF(f_idx, 0);
         int j = triF(f_idx, 1);
@@ -800,12 +641,10 @@ bool reconstructFaceOmegas(const Eigen::MatrixXd& faceOmegaList2DinputFrame, con
         Eigen::Vector3d v2 = V.row(k).transpose();
 
         // 2. Define the basis vectors (edges v0->v1 and v0->v2)
-        // These are the vectors onto which the 3D omega vector (psi) was projected.
         Eigen::Vector3d e1 = v1 - v0; // Edge v0->v1
         Eigen::Vector3d e2 = v2 - v0; // Edge v0->v2
 
         // 3. Define the system: U * psi = c
-        // U is the 2x3 matrix of basis vectors (e1, e2) as rows.
         Eigen::MatrixXd U(2, 3);
         U.row(0) = e1;
         U.row(1) = e2;
@@ -814,25 +653,47 @@ bool reconstructFaceOmegas(const Eigen::MatrixXd& faceOmegaList2DinputFrame, con
         Eigen::Vector2d c;
         c(0) = faceOmegaList2DinputFrame(f_idx, 0); // component along e1
         c(1) = faceOmegaList2DinputFrame(f_idx, 1); // component along e2
-
-        // 4. Solve the least squares problem for psi (the 3D vector)
-        // Since U is 2x3, we use the pseudo-inverse (Normal Equations method: U^T * U * psi = U^T * c)
         
-        // A = U^T * U (3x3 matrix)
-        Eigen::Matrix3d A = U.transpose() * U; 
+        Eigen::Vector3d psi_vec;
+
+        // --- 1. Check for Trivial Input (c = 0) ---
+        if (c.norm() < 1e-12) 
+        {
+            psi_vec = Eigen::Vector3d::Zero();
+        } 
         
-        // b = U^T * c (3x1 vector)
-        Eigen::Vector3d b = U.transpose() * c;
+        // --- 2. Geometric Reconstruction (2x2 Solve) ---
+        else 
+        {
+            // Gram Matrix G (2x2): G_ij = e_i . e_j
+            Eigen::Matrix2d G;
+            G(0, 0) = e1.dot(e1);
+            G(0, 1) = e1.dot(e2);
+            G(1, 0) = e2.dot(e1);
+            G(1, 1) = e2.dot(e2);
 
-        // Solve A * psi_vec = b using LU decomposition (fast and robust for 3x3)
-        // The resulting psi_vec is the minimal norm solution.
-        Eigen::Vector3d psi_vec = A.lu().solve(b);
+            // Determinant (proportional to Area squared)
+            double detG = G.determinant();
 
+            if (std::abs(detG) < GEOM_TOL_SQ) 
+            {
+                // Triangle is degenerate or ill-conditioned (Area is zero/near-zero).
+                psi_vec = Eigen::Vector3d::Zero();
+            } 
+            else 
+            {
+                // Solve G * x = c for the coefficients x = [x1; x2] in the e1, e2 basis.
+                Eigen::Vector2d x = G.inverse() * c;
+
+                // Reconstruct the final 3D vector: psi_vec = x1*e1 + x2*e2
+                // This vector is guaranteed to lie in the plane of the triangle.
+                psi_vec = x(0) * e1 + x(1) * e2;
+            }
+        }
+        
         // 5. Apply optional scaling and store
         faceOmegaList3DinputFrame.row(f_idx) = (psi_vec * scale).transpose();
     }
-    
-    // std::cout << "Successfully reconstructed 3D face omegas for " << num_faces << " faces." << std::endl;
     return true;
 }
 
@@ -913,102 +774,6 @@ bool loadSolvedProblem() {
 	return true;
 }
 
-// bool saveProblem()
-// {
-// 	std::string curOpt = "None";
-// 	if (selectedMotion == Enlarge)
-// 		curOpt = "Enlarge";
-// 	else if (selectedMotion == Rotate)
-// 		curOpt = "Rotate";
-
-// 	using json = nlohmann::json;
-// 	json jval =
-// 	{
-// 			{"mesh_name",         "mesh.obj"},
-// 			{"num_frame",         zList.size()},
-//             {"wrinkle_amp_ratio", config.ampScale},
-// 			{"quad_order",        quadOrder},
-// 			{"spatial_ratio",     {
-// 										   {"amp_ratio", spatialAmpRatio},
-// 										   {"edge_ratio", spatialEdgeRatio},
-// 										   {"knoppel_ratio", spatialKnoppelRatio}
-
-// 								  }
-// 			},
-// 			{"upsampled_times",  config.upsampleTimes},
-// 			{"init_omega",        "omega.txt"},
-// 			{"init_amp",          "amp.txt"},
-// 			{"init_zvals",        "zvals.txt"},
-// 			{"tar_omega",         "omega_tar.txt"},
-// 			{"tar_amp",           "amp_tar.txt"},
-// 			{"tar_zvals",         "zvals_tar.txt"},
-// 			{"region_global_details",	  {
-// 										{"select_all", isSelectAll},
-// 										{"omega_operation_motion", curOpt},
-// 										{"omega_operation_value", selectedMotionValue},
-// 										{"amp_omega_coupling", isCoupled},
-// 										{"amp_operation_value", selectedMagValue}
-// 								  }
-// 			},
-// 			{
-// 			 "solution",          {
-// 										  {"opt_amp", "/optAmp/"},
-// 										  {"opt_zvals", "/optZvals/"},
-// 										  {"opt_omega", "/optOmega/"},
-// 										  {"wrinkle_mesh", "/wrinkledMesh/"},
-// 										  {"upsampled_amp", "/upsampledAmp/"},
-// 										  {"upsampled_phase", "/upsampledPhase/"}
-// 								  }
-// 			}
-// 	};	
-
-// 	saveEdgeOmega(workingFolder + "omega.txt", initOmega);
-// 	saveVertexAmp(workingFolder + "amp.txt", initAmp);
-// 	saveVertexZvals(workingFolder + "zvals.txt", initZvals);
-
-// 	if (isLoadTar)
-// 	{
-// 		std::cout << "save target" << std::endl;
-// 		saveEdgeOmega(workingFolder + "omega_tar.txt", tarOmega);
-// 		saveVertexAmp(workingFolder + "amp_tar.txt", tarAmp);
-// 		saveVertexZvals(workingFolder + "zvals_tar.txt", tarZvals);
-// 	}
-
-// 	igl::writeOBJ(workingFolder + "mesh.obj", triV[0], triF);
-
-// 	std::string outputFolder = workingFolder + "/optZvals/";
-// 	mkdir(outputFolder);
-
-// 	std::string omegaOutputFolder = workingFolder + "/optOmega/";
-// 	mkdir(omegaOutputFolder);
-
-// 	std::string ampOutputFolder = workingFolder + "/optAmp/";
-// 	mkdir(ampOutputFolder);
-
-
-// 	int nframes = zList.size();
-// 	auto savePerFrame = [&](const tbb::blocked_range<uint32_t>& range)
-// 	{
-// 		for (uint32_t i = range.begin(); i < range.end(); ++i)
-// 		{
-
-// 			saveVertexZvals(outputFolder + "zvals_" + std::to_string(i) + ".txt", zList[i]);
-// 			saveEdgeOmega(omegaOutputFolder + "omega_" + std::to_string(i) + ".txt", omegaList[i]);
-// 			saveVertexAmp(ampOutputFolder + "amp_" + std::to_string(i) + ".txt", ampList[i]);
-// 		}
-// 	};
-
-// 	tbb::blocked_range<uint32_t> rangex(0u, (uint32_t)nframes, GRAIN_SIZE);
-// 	tbb::parallel_for(rangex, savePerFrame);
-
-
-// 	std::ofstream o(args.input);
-// 	o << std::setw(4) << jval << std::endl;
-// 	std::cout << "save file in: " << args.input << std::endl;
-
-// 	return true;
-// }
-
 bool saveForRender()
 {
 	// render information
@@ -1043,6 +808,8 @@ bool saveForRender()
 		{
 			// upsampled information
 			igl::writeOBJ(outputFolderWrinkles + "wrinkledMesh_" + std::to_string(i) + ".obj", wrinkledVList[i], upsampledTriF);
+
+            //what the fuck is up with this globalAmpMax and globalAmpMin. decide if to do away with this.
 			saveAmp4Render(ampFieldsList[i], outputFolderAmp + "upAmp_" + std::to_string(i) + ".cvs", globalAmpMin, globalAmpMax);
 			savePhi4Render(phaseFieldsList[i], outputFolderPhase + "upPhase" + std::to_string(i) + ".cvs");
 		}
@@ -1144,15 +911,15 @@ void optimizePsi(
 
         // Convergence check (energy change)
         if (prev_energy > 0.0 && std::abs(prev_energy - energy) < tol) {
-            std::cout << "Converged at iter " << it << ", energy = " << energy << std::endl;
+            //std::cout << "Converged at iter " << it << ", energy = " << energy << std::endl;
             break;
         }
 
         prev_energy = energy;
         // Optionally print energy every 100 iterations
-        if (it % 100 == 0) {
-            std::cout << "Iteration " << it << ", Energy = " << energy << std::endl;
-        }
+        // if (it % 100 == 0) {
+        //     std::cout << "Iteration " << it << ", Energy = " << energy << std::endl;
+        // }
     }
 }
 
@@ -1191,13 +958,13 @@ void optimizeAndSaveZvals()
 
         const Eigen::MatrixXd& faceOmega2D = faceOmegaList2Dinput[i];
 
-        std::cout << "\nOptimizing Frame " << i << " (" << max_iters << " iterations)..." << std::endl;
+        //std::cout << "\nOptimizing Frame " << i << " (" << max_iters << " iterations)..." << std::endl;
 
         optimizePsi(psi_eigen, triF, faceOmega2D, learning_rate, max_iters, tolerance);
 
         copyComplexEigenToStdVector(psi_eigen, zList[i]);
         
-        std::cout << "Frame " << i << " Z-values successfully optimized and saved." << std::endl;
+        //std::cout << "Frame " << i << " Z-values successfully optimized and saved." << std::endl;
     }
 }
 
@@ -1239,6 +1006,7 @@ int main(int argc, char** argv)
 	//need to populate zlist
 	optimizeAndSaveZvals();
 
+    //check if the issue is with upsampling, or nans have already popped up
 	// this function requires the upsampled mesh.  (only one frame)
 	// but at the same time, it requires a list of zvals and omegas for wrinkle propagation across frames
 	updateEverythingForSaving();

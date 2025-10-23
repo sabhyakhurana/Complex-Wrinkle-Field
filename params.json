@@ -1,6 +1,6 @@
 {
-  "numFrames": 100,
-  "upsampledTimes": 0,
+  "numFrames": 1000,
+  "upsampledTimes": 2,
   "ampScale": 1,
   "renderFolder": "../python-testbed/sim_data_2/render",
   "files": {
